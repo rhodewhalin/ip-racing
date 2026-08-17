@@ -23,6 +23,7 @@ export const ui = {
       try {
         await net.create(nick.value.trim());
         this.enterWaiting();
+        this.attachRoomState();
       } catch (e) { this.lobbyMsg("방 생성 실패: 서버가 켜져 있나요?"); }
     });
 
@@ -39,6 +40,7 @@ export const ui = {
       try {
         await net.join(c, nick.value.trim());
         this.enterWaiting();
+        this.attachRoomState();
         this.lobbyMsg("");
       } catch (e: any) {
         this.lobbyMsg(e?.message ? `입장 실패: ${e.message}` : "입장 실패: 코드를 확인하세요.");
@@ -49,12 +51,21 @@ export const ui = {
 
     $("btnReady").addEventListener("click", () => { net.ready(); this.lobbyMsg("준비 완료. 상대를 기다립니다…"); });
 
-    // 게임 시작 신호
+    // 방 생성/입장 이후에 상태 구독을 붙인다(그 전엔 room이 없어 무효).
+    this._onStart = onStart;
+  },
+
+  _onStart: (() => {}) as () => void,
+
+  /** 방에 연결된 직후 호출: 상태가 올 때마다 로비 화면을 갱신하고, 시작되면 게임으로 넘긴다 */
+  attachRoomState() {
     net.onState((s: any) => {
-      $("roomcode").textContent = s.roomCode || net.roomCode() || "…";
-      if (s.phase !== "lobby" && s.phase !== "countdown") { this.hide("lobby"); onStart(); }
+      $("roomcode").textContent = s.roomCode || "…";
       if (s.phase === "countdown") this.hide("lobby");
+      if (s.phase !== "lobby" && s.phase !== "countdown") { this.hide("lobby"); this._onStart(); }
     });
+    // 이미 도착해 있는 상태가 있으면 즉시 반영
+    if (net.state?.roomCode) $("roomcode").textContent = net.state.roomCode;
   },
 
   enterWaiting() {

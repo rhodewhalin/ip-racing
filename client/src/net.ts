@@ -23,7 +23,17 @@ export const net = {
   async create(nickname: string) {
     this.room = await this.client.create("race", { nickname });
     this._wire();
+    await this._waitFirstState();
     return (this.room as any).roomId as string;
+  },
+
+  /** 첫 상태 스냅샷이 도착할 때까지 잠깐 기다린다(최대 3초). roomCode를 바로 그리기 위함. */
+  _waitFirstState(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.state?.roomCode) return resolve();
+      const t = setTimeout(resolve, 3000);
+      this.room?.onStateChange.once(() => { clearTimeout(t); resolve(); });
+    });
   },
 
   /** 6자리 방 코드로 입장. 실패 시 이유가 담긴 Error를 던진다. */
@@ -39,6 +49,7 @@ export const net = {
 
     this.room = await this.client.joinById(match.roomId, { nickname });
     this._wire();
+    await this._waitFirstState();
     return (this.room as any).roomId as string;
   },
 
