@@ -21,37 +21,48 @@ export const ui = {
     $("btnCreate").addEventListener("click", async () => {
       if (!nick.value.trim()) return this.lobbyMsg("닉네임을 입력하세요.");
       try {
-        const roomId = await net.create(nick.value.trim());
-        this.enterWaiting(roomId);
+        await net.create(nick.value.trim());
+        this.enterWaiting();
       } catch (e) { this.lobbyMsg("방 생성 실패: 서버가 켜져 있나요?"); }
     });
 
-    $("btnJoin").addEventListener("click", () => code.classList.toggle("hidden"));
-
-    $("code").addEventListener("keydown", async (ev) => {
-      if ((ev as KeyboardEvent).key !== "Enter") return;
-      if (!nick.value.trim()) return this.lobbyMsg("닉네임을 입력하세요.");
-      try {
-        const roomId = await net.join(code.value.trim(), nick.value.trim());
-        this.enterWaiting(roomId);
-      } catch (e) { this.lobbyMsg("입장 실패: 코드를 확인하세요."); }
+    $("btnJoin").addEventListener("click", () => {
+      $("joinbox").classList.toggle("hidden");
+      ($("code") as HTMLInputElement).focus();
     });
+
+    const doJoin = async () => {
+      if (!nick.value.trim()) return this.lobbyMsg("닉네임을 입력하세요.");
+      const c = code.value.trim();
+      if (!c) return this.lobbyMsg("방 코드를 입력하세요.");
+      this.lobbyMsg("입장 중…");
+      try {
+        await net.join(c, nick.value.trim());
+        this.enterWaiting();
+        this.lobbyMsg("");
+      } catch (e: any) {
+        this.lobbyMsg(e?.message ? `입장 실패: ${e.message}` : "입장 실패: 코드를 확인하세요.");
+      }
+    };
+    $("btnJoinGo").addEventListener("click", doJoin);
+    $("code").addEventListener("keydown", (ev) => { if ((ev as KeyboardEvent).key === "Enter") doJoin(); });
 
     $("btnReady").addEventListener("click", () => { net.ready(); this.lobbyMsg("준비 완료. 상대를 기다립니다…"); });
 
     // 게임 시작 신호
     net.onState((s: any) => {
-      $("roomcode").textContent = (net.room as any)?.roomId ?? "";
+      $("roomcode").textContent = s.roomCode || net.roomCode() || "…";
       if (s.phase !== "lobby" && s.phase !== "countdown") { this.hide("lobby"); onStart(); }
       if (s.phase === "countdown") this.hide("lobby");
     });
   },
 
-  enterWaiting(roomId: string) {
-    $("roomcode").textContent = roomId;
+  enterWaiting() {
     $("btnCreate").parentElement!.classList.add("hidden");
-    ($("code") as HTMLElement).classList.add("hidden");
+    $("joinbox").classList.add("hidden");
     this.show("waiting");
+    // roomCode는 state가 도착하면 채워진다(아래 onState에서 갱신)
+    $("roomcode").textContent = net.roomCode() || "…";
   },
   lobbyMsg(m: string) { $("lobbyMsg").textContent = m; },
 

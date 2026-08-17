@@ -23,6 +23,12 @@ export class RaceRoom extends Room<RoomState> {
     this.questions = pickMatchQuestions(CONFIG.gateCount);
     this.correctIndexByGate = this.questions.map((q) => q.correctIndex);
 
+    // PRD 4장: 사람이 옮겨 적기 쉬운 6자리 방 코드 (헷갈리는 0/O/1/I 제외).
+    // metadata에 넣어두면 클라이언트가 이 코드로 방을 찾을 수 있다.
+    const code = makeRoomCode();
+    this.state.roomCode = code;
+    this.setMetadata({ roomCode: code });
+
     this.onMessage("set_ready", (client) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || this.state.phase !== "lobby") return;
@@ -65,6 +71,7 @@ export class RaceRoom extends Room<RoomState> {
 
   private startCountdown() {
     this.state.phase = "countdown";
+    this.lock(); // 시작 후 추가 입장 차단
     this.state.countdown = Math.ceil(CONFIG.countdownMs / 1000);
     const iv = this.clock.setInterval(() => {
       this.state.countdown -= 1;
@@ -283,4 +290,12 @@ export class RaceRoom extends Room<RoomState> {
 
     this.broadcast("match_end", { results, review });
   }
+}
+
+/** 사람이 읽기 쉬운 6자리 방 코드. 0/O/1/I 제외. */
+function makeRoomCode(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return s;
 }

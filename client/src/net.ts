@@ -26,11 +26,24 @@ export const net = {
     return (this.room as any).roomId as string;
   },
 
+  /** 6자리 방 코드로 입장. 실패 시 이유가 담긴 Error를 던진다. */
   async join(code: string, nickname: string) {
-    this.room = await this.client.joinById(code, { nickname });
+    const wanted = code.trim().toUpperCase();
+    if (wanted.length !== 6) throw new Error("방 코드는 6자리입니다.");
+
+    // 열려 있는 race 방 목록에서 코드가 일치하는 방을 찾는다
+    const rooms = await this.client.getAvailableRooms("race");
+    const match = rooms.find((r: any) => r.metadata?.roomCode === wanted);
+    if (!match) throw new Error("그 코드의 방을 찾을 수 없어요. 코드를 다시 확인하거나, 방이 이미 시작/종료되지 않았는지 보세요.");
+    if (match.clients >= match.maxClients) throw new Error("방이 가득 찼어요 (2인).");
+
+    this.room = await this.client.joinById(match.roomId, { nickname });
     this._wire();
     return (this.room as any).roomId as string;
   },
+
+  /** 화면에 표시할 사람용 방 코드 */
+  roomCode(): string { return this.state?.roomCode || ""; },
 
   ready() { this.room?.send("set_ready"); },
   choose(gate: "A" | "B" | "C") { this.room?.send("submit_choice", { gate }); },

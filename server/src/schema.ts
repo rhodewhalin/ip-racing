@@ -33,6 +33,7 @@ export class PlayerState extends Schema {
 export class RoomState extends Schema {
   // phase: lobby | countdown | racing | quiz_read | quiz_choose | resolving | finished
   @type("string") phase = "lobby";
+  @type("string") roomCode = ""; // 사람이 읽기 쉬운 6자리 입장 코드
   @type("number") currentGateIndex = 0;
   @type("number") countdown = 0;
 
