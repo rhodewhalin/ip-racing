@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1280, initial-scale=1" />
+    <title>IP Racing — Stage 1</title>
+    <style>
+      :root { --bg:#0e1424; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; }
+      * { box-sizing: border-box; font-family: system-ui, "Apple SD Gothic Neo", sans-serif; }
+      body { margin:0; background:var(--bg); color:var(--fg); }
+      #app { width:1280px; margin:0 auto; position:relative; }
+      #game { width:1280px; height:480px; background:#0a1020; }
+      .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(8,12,24,.82); }
+      .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px 32px; width:520px; }
+      h1 { margin:0 0 4px; font-size:26px; letter-spacing:1px; }
+      .sub { color:#9fb0d0; margin:0 0 20px; font-size:13px; }
+      input, button { font-size:15px; }
+      input { width:100%; padding:11px 12px; margin:6px 0 14px; border-radius:9px; border:1px solid var(--line); background:#0f1830; color:var(--fg); }
+      button { padding:11px 16px; border:0; border-radius:9px; background:var(--accent); color:#04122b; font-weight:700; cursor:pointer; }
+      button.ghost { background:#25324c; color:var(--fg); }
+      .row { display:flex; gap:10px; }
+      .row button { flex:1; }
+      .hidden { display:none !important; }
+      #gates { display:flex; gap:12px; margin-top:14px; }
+      .gate { flex:1; text-align:center; padding:16px 8px; border:2px solid var(--line); border-radius:12px; background:#101a30; opacity:.45; transition:.12s; }
+      .gate .item { font-size:24px; }
+      .gate .concept { font-size:18px; font-weight:700; margin-top:6px; }
+      .gate .key { font-size:12px; color:#8ea3c8; margin-top:6px; }
+      #quiz.choose .gate { opacity:1; cursor:pointer; }
+      .gate.picked { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset; }
+      #timerbar { height:8px; background:#0f1830; border-radius:6px; margin-top:14px; overflow:hidden; }
+      #timerfill { height:100%; width:100%; background:var(--accent); transition:width .1s linear; }
+      #qtext { font-size:20px; font-weight:700; min-height:28px; }
+      .hint { color:#8ea3c8; font-size:12px; margin-top:10px; }
+      #review .q { border-bottom:1px solid var(--line); padding:12px 0; }
+      #review .q.wrong { background:rgba(255,93,108,.08); }
+      #review .tag { font-size:11px; color:#8ea3c8; }
+      #reviewlist { max-height:300px; overflow:auto; margin:10px 0; }
+      .score { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed var(--line); }
+      .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:12px; }
+      .badge.ok { background:rgba(55,214,122,.15); color:var(--good); }
+      .badge.no { background:rgba(255,93,108,.15); color:var(--bad); }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game"></div>
+
+      <!-- LOBBY -->
+      <div id="lobby" class="overlay">
+        <div class="card">
+          <h1>IP RACING</h1>
+          <p class="sub">지식재산권 교육 레이싱 · Stage 1 (2인)</p>
+          <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
+          <div class="row">
+            <button id="btnCreate">게임 만들기</button>
+            <button id="btnJoin" class="ghost">방 코드 입장</button>
+          </div>
+          <input id="code" class="hidden" placeholder="방 코드 (예: AB7K92)" maxlength="8" />
+          <div id="waiting" class="hidden">
+            <p class="sub">방 코드: <b id="roomcode"></b> · 상대를 기다리는 중…</p>
+            <button id="btnReady">준비 완료</button>
+          </div>
+          <p id="lobbyMsg" class="hint"></p>
+        </div>
+      </div>
+
+      <!-- QUIZ -->
+      <div id="quiz" class="overlay hidden">
+        <div class="card">
+          <p class="tag" id="qmeta"></p>
+          <div id="qtext"></div>
+          <div id="gates"></div>
+          <div id="timerbar"><div id="timerfill"></div></div>
+          <p class="hint">← ↓ → 로 게이트 선택 · [1] 또는 Space 로 아이템 사용</p>
+        </div>
+      </div>
+
+      <!-- RESULT / REVIEW -->
+      <div id="result" class="overlay hidden">
+        <div class="card">
+          <h1>🏁 RESULT</h1>
+          <div id="scores"></div>
+          <h1 style="font-size:18px;margin-top:18px">🧠 IP REVIEW</h1>
+          <div id="reviewlist"></div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

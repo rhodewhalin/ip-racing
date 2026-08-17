@@ -1,0 +1,11 @@
+{
+  "name": "ip-racing",
+  "private": true,
+  "version": "0.1.0",
+  "description": "IP Racing - Stage 1 (2-player core loop). Phaser 3 client + Colyseus authoritative server.",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev"
+  }
+}
