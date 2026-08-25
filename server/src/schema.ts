@@ -1,58 +1,69 @@
 // ============================================================
-// Colyseus 상태 스키마
-// 이 state는 클라이언트로 자동 동기화된다. 여기에 정답은 절대 넣지 않는다.
-// 정답/설명/출처는 match_end 메시지로만 공개(IP Review).
-//
-// [변경] PlayerState.bet 추가 — 상대의 베팅이 보이는 것이 설계 의도다.
-//        "쟤가 승부를 걸었다"는 정보가 심리전을 만든다.
-//        숨기고 싶다면 이 필드를 빼고 gate_resolved 페이로드로만 공개하면 된다.
+// Colyseus 상태 스키마 (Stage 2)
+// 정답은 절대 들어가지 않는다. 퀴즈 문항은 해당 플레이어에게만 targeted message로.
 // ============================================================
 
 import { Schema, MapSchema, ArraySchema, type } from "@colyseus/schema";
 
-export class GateOption extends Schema {
-  @type("string") label = ""; // "A" | "B" | "C"
-  @type("string") text = "";
-  @type("string") item = ""; // 게이트에 표시되는 연출용 아이템
-}
-
-export class AnswerRecord extends Schema {
-  @type("number") gateIndex = 0;
-  @type("string") chosen = ""; // "", "A", "B", "C"
-  @type("boolean") correct = false;
-  @type("string") bet = "safe"; // [신규] 그 문제에 건 베팅
-}
-
-export class PlayerState extends Schema {
+export class KartState extends Schema {
   @type("string") sessionId = "";
   @type("string") nickname = "";
-  @type("number") progress = 0;
-  @type("number") speedMultiplier = 1;
-  @type("string") currentItem = "";
-  @type("boolean") shieldActive = false;
+
+  // 물리
+  @type("number") x = 0;
+  @type("number") y = 0;
+  @type("number") heading = 0;
+  @type("number") speed = 0;
+  @type("boolean") drifting = false;
+  @type("number") driftCharge = 0;
+
+  // 코스 진행
+  @type("number") lap = 0;
+  @type("number") s = 0;        // 중심선 거리
   @type("number") rank = 1;
+  @type("boolean") offTrack = false;
+  @type("boolean") finished = false;
+  @type("number") finishMs = 0;
+
+  // 상태 효과 (남은 ms)
+  @type("number") stunMs = 0;
+  @type("number") shieldMs = 0;
+  @type("number") boostMs = 0;
+  @type("number") speedMul = 1;
+
+  @type("string") item = "";       // "", bomb, boost, oil, shield
+  @type("boolean") quizActive = false;
+  @type("string") quizKind = "";   // item | block | escape
+
+  @type("number") correctCount = 0;
+  @type("number") answerCount = 0;
   @type("boolean") ready = false;
+}
 
-  // [신규] 이번 게이트 베팅. quiz_read 시작 시 "safe"로 리셋된다.
-  @type("string") bet = "safe";
-  // [신규] 연속 정답. 연출(콤보)과 후속 밸런싱용.
-  @type("number") streak = 0;
+export class PickupState extends Schema {
+  @type("string") id = "";
+  @type("string") kind = "item"; // item | block
+  @type("number") x = 0;
+  @type("number") y = 0;
+  @type("boolean") active = true;
+}
 
-  @type([AnswerRecord]) answers = new ArraySchema<AnswerRecord>();
+export class HazardState extends Schema {
+  @type("string") id = "";
+  @type("string") owner = "";
+  @type("number") x = 0;
+  @type("number") y = 0;
 }
 
 export class RoomState extends Schema {
-  // phase: lobby | countdown | racing | quiz_read | quiz_choose | resolving | finished
+  // lobby | countdown | racing | finished
   @type("string") phase = "lobby";
   @type("string") roomCode = "";
-  @type("number") currentGateIndex = 0;
   @type("number") countdown = 0;
+  @type("number") laps = 3;
+  @type("number") raceMs = 0;
 
-  @type("string") questionId = "";
-  @type("string") questionText = "";
-  @type([GateOption]) options = new ArraySchema<GateOption>();
-  @type("number") readMs = 0;
-  @type("number") chooseMs = 0;
-
-  @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
+  @type({ map: KartState }) karts = new MapSchema<KartState>();
+  @type([PickupState]) pickups = new ArraySchema<PickupState>();
+  @type([HazardState]) hazards = new ArraySchema<HazardState>();
 }

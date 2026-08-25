@@ -3,117 +3,120 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1280, initial-scale=1" />
-    <title>IP Racing — Stage 1.5</title>
+    <title>IP Racing — Stage 2</title>
     <style>
-      :root { --bg:#0e1424; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --risk:#ffb020; }
-      * { box-sizing: border-box; font-family: system-ui, "Apple SD Gothic Neo", sans-serif; }
-      body { margin:0; background:var(--bg); color:var(--fg); }
-      #app { width:1280px; margin:0 auto; position:relative; }
-      #game { width:1280px; height:480px; background:#0a1020; }
+      :root { --bg:#0b1220; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --warn:#ffb020; }
+      * { box-sizing:border-box; font-family:system-ui,"Apple SD Gothic Neo",sans-serif; }
+      body { margin:0; background:#070c16; color:var(--fg); display:flex; justify-content:center; }
+      #app { width:1280px; height:720px; position:relative; }
+      #game { width:1280px; height:720px; }
+      .hidden { display:none !important; }
 
-      /* 로비/결과만 전체 덮기 */
-      .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(8,12,24,.82); }
-      .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px 32px; width:520px; }
-      h1 { margin:0 0 4px; font-size:26px; letter-spacing:1px; }
-      .sub { color:#9fb0d0; margin:0 0 20px; font-size:13px; }
-      input, button { font-size:15px; }
-      input { width:100%; padding:11px 12px; margin:6px 0 14px; border-radius:9px; border:1px solid var(--line); background:#0f1830; color:var(--fg); }
-      button { padding:11px 16px; border:0; border-radius:9px; background:var(--accent); color:#04122b; font-weight:700; cursor:pointer; }
+      .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(7,12,22,.86); }
+      .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:28px 32px; width:540px; }
+      h1 { margin:0 0 4px; font-size:28px; letter-spacing:1px; }
+      .sub { color:#9fb0d0; margin:0 0 18px; font-size:13px; }
+      input { width:100%; padding:11px 12px; margin:6px 0 12px; border-radius:9px; border:1px solid var(--line); background:#0f1830; color:var(--fg); font-size:15px; }
+      button { padding:11px 16px; border:0; border-radius:9px; background:var(--accent); color:#04122b; font-weight:700; cursor:pointer; font-size:15px; }
       button.ghost { background:#25324c; color:var(--fg); }
       .row { display:flex; gap:10px; }
       .row button { flex:1; }
-      .hidden { display:none !important; }
+      .prow { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed var(--line); font-size:14px; }
 
-      /* ===== 퀴즈: 전체화면이 아니라 하단 패널 =====
-         레이스가 계속 보여야 퀴즈와 레이스가 서로를 죽이지 않는다. */
-      #quiz {
-        position:absolute; left:0; right:0; bottom:0;
-        background:linear-gradient(to top, rgba(8,12,24,.97), rgba(8,12,24,.80));
-        border-top:1px solid var(--line);
-        padding:14px 22px 16px;
-        transition:box-shadow .18s;
-      }
-      #quiz.ok { box-shadow:inset 0 3px 0 var(--good); }
-      #quiz.no { box-shadow:inset 0 3px 0 var(--bad); }
-      #qhead { display:flex; align-items:center; gap:14px; }
-      #qmeta { font-size:12px; color:#8ea3c8; margin:0; white-space:nowrap; }
-      #qtext { font-size:19px; font-weight:700; flex:1; }
+      /* HUD */
+      #hud { position:absolute; left:0; right:0; top:0; padding:14px 20px; display:flex; gap:26px;
+             pointer-events:none; text-shadow:0 2px 6px rgba(0,0,0,.8); }
+      #hud .cell { display:flex; flex-direction:column; }
+      #hud .k { font-size:11px; color:#8ea3c8; letter-spacing:1px; }
+      #hud .v { font-size:26px; font-weight:800; }
+      #hudItem.ready { color:var(--warn); }
+      #hud.offtrack::after { content:"코스 이탈"; position:absolute; right:22px; top:18px;
+             color:var(--warn); font-weight:800; font-size:18px; }
 
-      /* 베팅 */
-      #betbox { display:flex; align-items:center; gap:8px; }
-      .bet { padding:7px 13px; border-radius:8px; font-size:13px; font-weight:700;
-             background:#25324c; color:#9fb0d0; border:2px solid transparent; cursor:pointer; transition:.12s; }
-      .bet.on { color:#04122b; }
-      #betSafe.on { background:var(--accent); border-color:var(--accent); }
-      #betRisk.on { background:var(--risk); border-color:var(--risk); }
-      #quiz.locked .bet { opacity:.4; pointer-events:none; }
-      #oppbet { font-size:12px; color:#8ea3c8; min-width:110px; }
+      /* 카운트다운 */
+      #countdown { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+      #countnum { font-size:120px; font-weight:900; color:#fff; text-shadow:0 6px 30px rgba(77,163,255,.9); }
 
-      #gates { display:flex; gap:12px; margin-top:10px; }
-      .gate { flex:1; text-align:center; padding:10px 8px; border:2px solid var(--line); border-radius:12px; background:#101a30; opacity:.45; transition:.12s; }
-      .gate .item { font-size:20px; }
-      .gate .concept { font-size:17px; font-weight:700; margin-top:4px; }
-      .gate .key { font-size:12px; color:#8ea3c8; margin-top:4px; }
-      #quiz.choose .gate { opacity:1; cursor:pointer; }
-      .gate.picked { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset; }
+      /* 퀴즈 — 우하단 카드. 레이스를 가리지 않는다. */
+      .quiz-card { position:absolute; right:20px; bottom:20px; width:440px;
+                   background:rgba(16,24,44,.96); border:2px solid var(--line);
+                   border-radius:14px; padding:14px 16px; }
+      .quiz-card.escape { border-color:var(--bad); }
+      .quiz-card.block  { border-color:var(--warn); }
+      .quiz-card.item   { border-color:var(--accent); }
+      .quiz-card.ok { border-color:var(--good); }
+      .quiz-card.no { border-color:var(--bad); }
+      #qkind { font-size:12px; color:#8ea3c8; font-weight:700; letter-spacing:1px; }
+      #qtext { font-size:17px; font-weight:700; margin:6px 0 10px; line-height:1.35; }
+      #qopts { display:flex; flex-direction:column; gap:6px; }
+      .qopt { text-align:left; background:#25324c; color:var(--fg); font-weight:600; padding:9px 12px; }
+      .qopt b { color:var(--accent); margin-right:8px; }
+      .qopt.picked { background:var(--accent); color:#04122b; }
+      .qopt:disabled { opacity:.55; cursor:default; }
+      #qbar { height:6px; background:#0f1830; border-radius:5px; margin-top:10px; overflow:hidden; }
+      #qfill { height:100%; width:100%; background:var(--accent); }
 
-      #timerbar { height:8px; background:#0f1830; border-radius:6px; margin-top:10px; overflow:hidden; }
-      #timerfill { height:100%; width:100%; background:var(--accent); transition:width .1s linear; }
-      .hint { color:#8ea3c8; font-size:12px; margin:8px 0 0; }
-
-      #review .q { border-bottom:1px solid var(--line); padding:12px 0; }
-      #review .q.wrong { background:rgba(255,93,108,.08); }
+      /* 결과 */
+      .score { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed var(--line); }
+      #reviewlist { max-height:280px; overflow:auto; margin:10px 0; }
+      #reviewlist .q { border-bottom:1px solid var(--line); padding:10px 0; font-size:14px; }
+      #reviewlist .q.wrong { background:rgba(255,93,108,.08); }
       .tag { font-size:11px; color:#8ea3c8; }
-      #reviewlist { max-height:300px; overflow:auto; margin:10px 0; }
-      .score { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed var(--line); }
-      .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:12px; }
-      .badge.ok { background:rgba(55,214,122,.15); color:var(--good); }
-      .badge.no { background:rgba(255,93,108,.15); color:var(--bad); }
+      .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; background:#25324c; }
+      .badge.ok { background:rgba(55,214,122,.16); color:var(--good); }
+      .badge.no { background:rgba(255,93,108,.16); color:var(--bad); }
     </style>
   </head>
   <body>
     <div id="app">
       <div id="game"></div>
 
-      <!-- LOBBY -->
+      <!-- HUD -->
+      <div id="hud" class="hidden">
+        <div class="cell"><span class="k">RANK</span><span class="v" id="hudRank">-</span></div>
+        <div class="cell"><span class="k">LAP</span><span class="v" id="hudLap">-</span></div>
+        <div class="cell"><span class="k">ITEM (Space)</span><span class="v" id="hudItem">—</span></div>
+        <div class="cell"><span class="k">SPEED</span><span class="v" id="hudSpeed">0</span></div>
+      </div>
+
+      <div id="countdown" class="hidden"><div id="countnum"></div></div>
+
+      <!-- 퀴즈 -->
+      <div id="quiz" class="quiz-card hidden">
+        <div id="qkind"></div>
+        <div id="qtext"></div>
+        <div id="qopts"></div>
+        <div id="qbar"><div id="qfill"></div></div>
+      </div>
+
+      <!-- 로비 -->
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 교육 레이싱 · Stage 1.5 (2인)</p>
+          <p class="sub">지식재산권 카트 레이싱 · 2~4인 · 3바퀴</p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
-          <div class="row">
+          <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>
             <button id="btnJoin" class="ghost">방 코드 입장</button>
           </div>
           <div id="joinbox" class="row hidden" style="align-items:center">
-            <input id="code" placeholder="방 코드 6자리 (예: AB7K92)" maxlength="6" style="margin:0;text-transform:uppercase;letter-spacing:2px" />
+            <input id="code" placeholder="방 코드 6자리" maxlength="6" style="margin:0;text-transform:uppercase;letter-spacing:3px" />
             <button id="btnJoinGo" style="flex:0 0 auto">입장</button>
           </div>
           <div id="waiting" class="hidden">
-            <p class="sub">방 코드: <b id="roomcode"></b> · 상대를 기다리는 중…</p>
-            <button id="btnReady">준비 완료</button>
+            <p class="sub">방 코드: <b id="roomcode"></b></p>
+            <div id="players"></div>
+            <br />
+            <button id="btnReady" style="width:100%">준비 완료</button>
           </div>
-          <p id="lobbyMsg" class="hint"></p>
+          <p class="sub" style="margin-top:14px">
+            ↑ 가속 · ↓ 브레이크 · ← → 조향 · <b>Shift</b> 드리프트 · <b>Space</b> 아이템 · 문제는 <b>1 2 3</b>
+          </p>
+          <p class="sub" id="lobbyMsg" style="margin:0"></p>
         </div>
       </div>
 
-      <!-- QUIZ (하단 패널) -->
-      <div id="quiz" class="hidden">
-        <div id="qhead">
-          <p id="qmeta"></p>
-          <div id="qtext"></div>
-          <div id="betbox">
-            <span id="oppbet"></span>
-            <button id="betSafe" class="bet on">🛡 안전</button>
-            <button id="betRisk" class="bet">🔥 승부</button>
-          </div>
-        </div>
-        <div id="gates"></div>
-        <div id="timerbar"><div id="timerfill"></div></div>
-        <p class="hint">읽는 동안 <b>안전/승부</b> 결정 (Space로 토글) · 선택은 ← ↓ → · 아이템은 [1]</p>
-      </div>
-
-      <!-- RESULT / REVIEW -->
+      <!-- 결과 -->
       <div id="result" class="overlay hidden">
         <div class="card">
           <h1>🏁 RESULT</h1>

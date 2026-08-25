@@ -1,92 +1,118 @@
 // ============================================================
-// RaceRoom — 권위 서버 (Stage 1.5)
-// 상태 머신: lobby → countdown → racing → (quiz_read → quiz_choose → resolving)*6 → finished
+// RaceRoom — 권위 서버 (Stage 2: 카트 주행)
 //
-// [변경 1] 확신도 베팅: READ 중 safe/risk 선택 → resolveGate에서 결과가 갈린다.
-// [변경 2] 이펙트 스택: 기존 applyEffect는 "마지막 타이머 승"이라 로켓 맞은 뒤
-//          부스터를 쓰면 로켓 타이머가 부스터를 조기 종료시키는 버그가 있었다.
-//          이제 효과를 배열로 쌓고 곱연산하며, 남은 시간은 racing 틱에서만 감소한다.
-//          (= 퀴즈 정지 중에는 방패/부스터 시간이 흐르지 않는다. 이것도 기존 버그였다.)
+// 이전 버전과의 핵심 차이:
+//  · progress 스칼라 → (x, y, heading, speed) 2D 물리. 플레이어 입력이 들어간다.
+//  · 퀴즈가 레이스를 멈추지 않는다. 플레이어별로 독립 출제.
+//  · 2~4인. 순위 기반 아이템 배정도 인원수에 맞춰 스케일.
+//
+// 상태 머신: lobby → countdown → racing → finished
 // ============================================================
 
 import { Room, Client } from "colyseus";
-import { RoomState, PlayerState, GateOption, AnswerRecord } from "./schema";
-import { CONFIG, ITEMS, ItemId, BetKind } from "./gameConfig";
-import { pickMatchQuestions, gateLabel, Question } from "./questions";
-import { grantItemByRank, randomDisplayItem } from "./items";
+import { RoomState, KartState, PickupState, HazardState } from "./schema";
+import { CONFIG, ItemId, QuizKind } from "./gameConfig";
+import { KART, KartInput, stepKart, driftReleaseBoost } from "./physics";
+import {
+  TRACK_POINTS, TRACK_WIDTH, buildTrack, project, offsetPoint, TrackData,
+} from "./track";
+import { grantItem } from "./items";
+import { QuestionDispenser } from "./dispenser";
+import { gateLabel, Question } from "./questions";
 
-/** 남은 시간이 racing 틱에서만 감소하는 속도 효과. */
-type Effect = { tag: string; multiplier: number; remainMs: number };
+interface Pending {
+  q: Question;
+  kind: QuizKind;
+  correctLabel: string;
+  timer: any;
+}
 
 export class RaceRoom extends Room<RoomState> {
   maxClients = CONFIG.maxClients;
 
-  private questions: Question[] = [];
-  private correctIndexByGate: number[] = [];
-  private pendingChoice = new Map<string, string>();
-  private betLocked = false;
-  private quizFrozen = false;
-
-  /** sessionId -> 활성 효과 목록. 서버 전용(스키마 동기화 대상 아님). */
-  private effects = new Map<string, Effect[]>();
+  private track!: TrackData;
+  private inputs = new Map<string, KartInput>();
+  private pending = new Map<string, Pending>();
+  private lastQuizAt = new Map<string, number>();
+  private prevS = new Map<string, number>();
+  private wasDrifting = new Map<string, boolean>();
+  private dispenser = new QuestionDispenser();
+  private respawnAt = new Map<string, number>();
+  private hazardArm = new Map<string, number>();
+  private raceStart = 0;
+  private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
   onCreate() {
     this.setState(new RoomState());
-    this.questions = pickMatchQuestions(CONFIG.gateCount);
-    this.correctIndexByGate = this.questions.map((q) => q.correctIndex);
+    this.state.laps = CONFIG.laps;
+    this.track = buildTrack(TRACK_POINTS, TRACK_WIDTH);
 
     const code = makeRoomCode();
     this.state.roomCode = code;
     this.setMetadata({ roomCode: code });
 
+    this.spawnPickups();
+
     this.onMessage("set_ready", (client) => {
-      const p = this.state.players.get(client.sessionId);
-      if (!p || this.state.phase !== "lobby") return;
-      p.ready = true;
+      const k = this.state.karts.get(client.sessionId);
+      if (!k || this.state.phase !== "lobby") return;
+      k.ready = true;
       this.maybeStart();
     });
 
-    // [신규] 베팅. READ 중에만 받고 choose_open 시점에 잠근다.
-    this.onMessage("set_bet", (client, msg: { bet?: string }) => {
-      if (!CONFIG.BET.enabled) return;
-      if (this.state.phase !== "quiz_read") return;
-      if (CONFIG.BET.lockOnChoose && this.betLocked) return;
-      const p = this.state.players.get(client.sessionId);
-      if (!p) return;
-      const b = msg?.bet;
-      if (b === "safe" || b === "risk") p.bet = b;
+    // 입력은 바뀔 때만 온다. 서버는 마지막 입력을 계속 적용.
+    this.onMessage("input", (client, msg: any) => {
+      const cur = this.inputs.get(client.sessionId);
+      if (!cur) return;
+      if (typeof msg?.throttle === "number") cur.throttle = clamp(msg.throttle, -1, 1);
+      if (typeof msg?.steer === "number") cur.steer = clamp(msg.steer, -1, 1);
+      if (typeof msg?.drift === "boolean") cur.drift = msg.drift;
     });
 
-    this.onMessage("submit_choice", (client, msg: { gate?: string }) => {
-      if (this.state.phase !== "quiz_choose") return;
-      const g = msg?.gate;
-      if (g === "A" || g === "B" || g === "C") this.pendingChoice.set(client.sessionId, g);
+    this.onMessage("use_item", (client) => this.useItem(client.sessionId));
+
+    this.onMessage("quiz_answer", (client, msg: { choice?: string }) => {
+      this.resolveQuiz(client.sessionId, msg?.choice || "");
     });
 
-    this.onMessage("use_item", (client) => this.useItem(client));
-
-    this.setSimulationInterval((dt) => this.update(dt), 1000 / CONFIG.simHz);
+    this.setSimulationInterval((dt) => this.update(dt), 1000 / CONFIG.tickHz);
   }
 
   onJoin(client: Client, options: { nickname?: string } = {}) {
-    const p = new PlayerState();
-    p.sessionId = client.sessionId;
-    p.nickname = (options.nickname || "Player").slice(0, 12);
-    this.state.players.set(client.sessionId, p);
-    this.effects.set(client.sessionId, []);
+    const k = new KartState();
+    k.sessionId = client.sessionId;
+    k.nickname = (options.nickname || "Player").slice(0, 12);
+
+    // 출발선: 중심선 s=0 에서 좌우로 벌려 세운다
+    const idx = this.state.karts.size;
+    const lat = [-96, -32, 32, 96][idx] ?? 0;
+    const sp = offsetPoint(this.track, 0, lat);
+    k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
+
+    this.state.karts.set(client.sessionId, k);
+    this.inputs.set(client.sessionId, { throttle: 0, steer: 0, drift: false });
+    this.prevS.set(client.sessionId, 0);
+    this.wasDrifting.set(client.sessionId, false);
+
+    // 트랙 지오메트리는 상태가 아니라 1회성 데이터 — 접속 시 한 번만 보낸다
+    client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
   }
 
   onLeave(client: Client) {
-    this.state.players.delete(client.sessionId);
-    this.pendingChoice.delete(client.sessionId);
-    this.effects.delete(client.sessionId);
+    const id = client.sessionId;
+    this.state.karts.delete(id);
+    this.inputs.delete(id);
+    this.prevS.delete(id);
+    this.wasDrifting.delete(id);
+    const p = this.pending.get(id);
+    if (p) { p.timer?.clear?.(); this.pending.delete(id); }
   }
 
   // ---------- 흐름 ----------
 
   private maybeStart() {
-    const players = [...this.state.players.values()];
-    if (players.length >= 2 && players.every((p) => p.ready)) this.startCountdown();
+    const ks = [...this.state.karts.values()];
+    if (ks.length >= CONFIG.minClients && ks.every((k) => k.ready)) this.startCountdown();
   }
 
   private startCountdown() {
@@ -98,287 +124,392 @@ export class RaceRoom extends Room<RoomState> {
       if (this.state.countdown <= 0) {
         iv.clear();
         this.state.phase = "racing";
-        this.broadcast("match_start");
+        this.raceStart = Date.now();
+        this.broadcast("race_start");
       }
     }, 1000);
   }
 
+  private spawnPickups() {
+    const mk = (kind: "item" | "block", frac: number, i: number) => {
+      const p = new PickupState();
+      p.id = `${kind}-${i}`;
+      p.kind = kind;
+      const lat = kind === "item" ? [-72, 0, 72][i % 3] : 0;
+      const pt = offsetPoint(this.track, frac * this.track.total, lat);
+      p.x = pt.x; p.y = pt.y;
+      p.active = true;
+      this.state.pickups.push(p);
+    };
+    CONFIG.itemBoxAt.forEach((f, i) => mk("item", f, i));
+    CONFIG.ipBlockAt.forEach((f, i) => mk("block", f, i));
+  }
+
+  // ---------- 메인 루프 ----------
+
   private update(dtMs: number) {
-    if (this.state.phase !== "racing" || this.quizFrozen) return;
+    if (this.state.phase !== "racing") return;
     const dt = dtMs / 1000;
+    const now = Date.now();
+    this.state.raceMs = now - this.raceStart;
 
-    for (const p of this.state.players.values()) {
-      this.tickEffects(p, dtMs);
-      p.progress = Math.min(
-        CONFIG.trackLength,
-        p.progress + CONFIG.baseSpeed * p.speedMultiplier * dt
-      );
-    }
-    this.recomputeRanks();
+    const karts = [...this.state.karts.values()];
 
-    const maxProgress = Math.max(...[...this.state.players.values()].map((p) => p.progress));
+    for (const k of karts) {
+      if (k.finished) continue;
 
-    if (maxProgress >= CONFIG.trackLength) {
-      this.endMatch();
-      return;
-    }
-    const idx = this.state.currentGateIndex;
-    if (idx < CONFIG.gateCount && maxProgress >= CONFIG.gatePositions[idx]) {
-      this.startRead();
-    }
-  }
+      // 상태 효과 타이머
+      k.stunMs = Math.max(0, k.stunMs - dtMs);
+      k.shieldMs = Math.max(0, k.shieldMs - dtMs);
+      k.boostMs = Math.max(0, k.boostMs - dtMs);
+      k.speedMul = k.boostMs > 0 ? k.speedMul : 1;
 
-  private recomputeRanks() {
-    const sorted = [...this.state.players.values()].sort((a, b) => b.progress - a.progress);
-    sorted.forEach((p, i) => (p.rank = i + 1));
-  }
-
-  // ---------- 이펙트 스택 ----------
-
-  /** racing 틱에서만 호출. 만료된 효과를 걷어내고 배수를 곱연산으로 재계산한다. */
-  private tickEffects(p: PlayerState, dtMs: number) {
-    const list = this.effects.get(p.sessionId);
-    if (!list) return;
-
-    let write = 0;
-    for (let i = 0; i < list.length; i++) {
-      list[i].remainMs -= dtMs;
-      if (list[i].remainMs > 0) list[write++] = list[i];
-    }
-    list.length = write;
-
-    // 곱연산: 로켓(0.4) × 부스터(1.5) = 0.6. 부스터가 로켓을 부분 상쇄한다.
-    let m = 1;
-    for (const e of list) m *= e.multiplier;
-    p.speedMultiplier = Math.round(m * 1000) / 1000;
-    p.shieldActive = list.some((e) => e.tag === "shield");
-  }
-
-  private addEffect(p: PlayerState, tag: string, multiplier: number, durationMs: number) {
-    const list = this.effects.get(p.sessionId);
-    if (!list) return;
-    // 같은 tag는 갱신(중첩 방지). 다른 tag끼리는 곱해서 공존.
-    const found = list.find((e) => e.tag === tag);
-    if (found) {
-      found.multiplier = multiplier;
-      found.remainMs = Math.max(found.remainMs, durationMs);
-    } else {
-      list.push({ tag, multiplier, remainMs: durationMs });
-    }
-  }
-
-  private removeEffect(p: PlayerState, tag: string) {
-    const list = this.effects.get(p.sessionId);
-    if (!list) return;
-    const i = list.findIndex((e) => e.tag === tag);
-    if (i >= 0) list.splice(i, 1);
-  }
-
-  // ---------- 퀴즈 ----------
-
-  private startRead() {
-    const idx = this.state.currentGateIndex;
-    const q = this.questions[idx];
-    this.quizFrozen = true;
-    this.betLocked = false;
-    this.state.phase = "quiz_read";
-
-    // 베팅 초기화: 아무것도 안 하면 "안전"이 기본.
-    for (const p of this.state.players.values()) p.bet = "safe";
-
-    const displayItems: string[] = [];
-    this.state.options.clear();
-    q.options.forEach((text, i) => {
-      const item = randomDisplayItem();
-      displayItems.push(item);
-      const go = new GateOption();
-      go.label = gateLabel(i);
-      go.text = text;
-      go.item = item;
-      this.state.options.push(go);
-    });
-
-    this.state.questionId = q.id;
-    this.state.questionText = q.text;
-    const readMs = Math.min(
-      CONFIG.readMsMax,
-      Math.max(CONFIG.readMsMin, CONFIG.readMsBase + CONFIG.readMsPerChar * q.text.length)
-    );
-    this.state.readMs = readMs;
-    this.state.chooseMs = CONFIG.chooseMs;
-    this.pendingChoice.clear();
-
-    this.broadcast("question_start", {
-      qId: q.id,
-      gateIndex: idx,
-      text: q.text,
-      options: q.options.map((t, i) => ({ label: gateLabel(i), text: t, item: displayItems[i] })),
-      readMs,
-      chooseMs: CONFIG.chooseMs,
-      betEnabled: CONFIG.BET.enabled,
-    });
-
-    this.clock.setTimeout(() => this.startChoose(), readMs);
-  }
-
-  private startChoose() {
-    this.state.phase = "quiz_choose";
-    this.betLocked = true;
-    this.broadcast("choose_open");
-    this.clock.setTimeout(() => this.resolveGate(), CONFIG.chooseMs);
-  }
-
-  private resolveGate() {
-    const idx = this.state.currentGateIndex;
-    const correctLabel = gateLabel(this.correctIndexByGate[idx]);
-    this.state.phase = "resolving";
-
-    const players = [...this.state.players.values()];
-    const perPlayer: Record<string, any> = {};
-
-    for (const p of players) {
-      const chosen = this.pendingChoice.get(p.sessionId) || ""; // 미선택 = 오답
-      const correct = chosen === correctLabel;
-      const bet = (p.bet === "risk" ? "risk" : "safe") as BetKind;
-      const rule = CONFIG.BET[bet];
-
-      const rec = new AnswerRecord();
-      rec.gateIndex = idx;
-      rec.chosen = chosen;
-      rec.correct = correct;
-      rec.bet = bet;
-      p.answers.push(rec);
-
-      let itemGranted = "";
-      let boosted = false;
-
-      if (correct) {
-        p.streak += 1;
-        const opponentAhead = players.some((o) => o !== p && o.progress > p.progress);
-        const item = grantItemByRank(p.rank > 1, opponentAhead);
-        p.currentItem = item;
-        itemGranted = item;
-
-        // 승부 성공 → 즉시 부스트. 안전 성공 → 아이템만.
-        if (rule.correctBoost > 0) {
-          this.addEffect(p, "bet", rule.correctBoost, rule.correctMs);
-          boosted = true;
-        }
-      } else {
-        p.streak = 0;
-        // 승부 실패 → 스핀아웃급 감속. 안전 실패 → 가벼운 감속.
-        this.addEffect(p, "bet", rule.wrongMultiplier, rule.wrongMs);
-      }
-
-      perPlayer[p.sessionId] = {
-        passed: correct,
-        itemGranted,
-        rank: p.rank,
-        bet,
-        boosted,
-        streak: p.streak,
+      const input = this.inputs.get(k.sessionId)!;
+      const body = {
+        x: k.x, y: k.y, heading: k.heading, speed: k.speed,
+        driftCharge: k.driftCharge, drifting: k.drifting,
       };
+
+      stepKart(body, input, dt, {
+        offTrack: k.offTrack,
+        speedMul: k.speedMul,
+        stunned: k.stunMs > 0,
+      });
+
+      // 드리프트를 놓는 순간 부스트
+      const was = this.wasDrifting.get(k.sessionId) || false;
+      if (was && !body.drifting && driftReleaseBoost(k.driftCharge)) {
+        k.speedMul = KART.driftBoostMul;
+        k.boostMs = KART.driftBoostMs;
+        this.broadcast("fx", { type: "drift_boost", id: k.sessionId });
+      }
+      this.wasDrifting.set(k.sessionId, body.drifting);
+
+      k.x = body.x; k.y = body.y; k.heading = body.heading;
+      k.speed = body.speed;
+      k.drifting = body.drifting;
+      k.driftCharge = body.drifting ? body.driftCharge : 0;
+
+      // 코스 판정
+      const pr = project(this.track, k.x, k.y);
+      k.offTrack = pr.offTrack;
+
+      // 랩: 뒤쪽 1/4 에서 앞쪽 1/4 로 넘어가면 한 바퀴
+      const prev = this.prevS.get(k.sessionId) ?? pr.s;
+      if (prev > this.track.total * 0.75 && pr.s < this.track.total * 0.25) {
+        k.lap += 1;
+        this.broadcast("fx", { type: "lap", id: k.sessionId, lap: k.lap });
+        if (k.lap >= CONFIG.laps) this.finishKart(k, now);
+      } else if (prev < this.track.total * 0.25 && pr.s > this.track.total * 0.75) {
+        k.lap = Math.max(0, k.lap - 1); // 역주행 보정
+      }
+      this.prevS.set(k.sessionId, pr.s);
+      k.s = pr.s;
     }
 
-    this.broadcast("gate_resolved", { gateIndex: idx, perPlayer });
+    this.resolveKartCollisions(karts);
+    this.checkPickups(karts, now);
+    this.checkHazards(karts, now);
+    this.respawnPickups(now);
+    this.recomputeRanks(karts);
 
-    this.state.currentGateIndex = idx + 1;
-    this.state.questionId = "";
-    this.state.questionText = "";
-    this.state.options.clear();
-    this.quizFrozen = false;
-    this.state.phase = "racing";
+    // 종료 판정
+    const active = karts.filter((k) => !k.finished);
+    const firstDone = karts.find((k) => k.finished);
+    if (active.length === 0 || (firstDone && now - firstDone.finishMs > CONFIG.finishGraceMs)) {
+      this.endRace();
+    }
+  }
+
+  private finishKart(k: KartState, now: number) {
+    k.finished = true;
+    k.finishMs = now;
+    k.speed = 0;
+    this.broadcast("fx", { type: "finish", id: k.sessionId });
+  }
+
+  /** 카트끼리 겹치면 서로 밀어낸다. 몸싸움이 가능해야 4인전이 산다. */
+  private resolveKartCollisions(karts: KartState[]) {
+    for (let i = 0; i < karts.length; i++) {
+      for (let j = i + 1; j < karts.length; j++) {
+        const a = karts[i], b = karts[j];
+        if (a.finished || b.finished) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.hypot(dx, dy);
+        const min = KART.radius * 2;
+        if (d === 0 || d >= min) continue;
+        const push = (min - d) / 2;
+        const nx = dx / d, ny = dy / d;
+        a.x -= nx * push; a.y -= ny * push;
+        b.x += nx * push; b.y += ny * push;
+        // 속도도 조금 깎는다 — 부딪히면 손해여야 한다
+        a.speed *= 0.94; b.speed *= 0.94;
+      }
+    }
+  }
+
+  private checkPickups(karts: KartState[], now: number) {
+    for (const p of this.state.pickups) {
+      if (!p.active) continue;
+      for (const k of karts) {
+        if (k.finished || k.stunMs > 0) continue;
+        if (Math.hypot(k.x - p.x, k.y - p.y) > CONFIG.pickupRadius) continue;
+
+        p.active = false;
+        this.respawnAt.set(
+          p.id,
+          now + (p.kind === "item" ? CONFIG.itemBoxRespawnMs : CONFIG.ipBlockRespawnMs)
+        );
+        this.broadcast("fx", { type: "pickup", id: k.sessionId, kind: p.kind, x: p.x, y: p.y });
+        this.openQuiz(k, p.kind === "item" ? "item" : "block");
+        break;
+      }
+    }
+  }
+
+  private respawnPickups(now: number) {
+    for (const p of this.state.pickups) {
+      if (p.active) continue;
+      const at = this.respawnAt.get(p.id);
+      if (at !== undefined && now >= at) {
+        p.active = true;
+        this.respawnAt.delete(p.id);
+      }
+    }
+  }
+
+  private checkHazards(karts: KartState[], now: number) {
+    for (let i = this.state.hazards.length - 1; i >= 0; i--) {
+      const h = this.state.hazards[i];
+      if (!h) continue;
+      const armed = (this.hazardArm.get(h.id) ?? 0) <= now;
+      for (const k of karts) {
+        if (k.finished || k.stunMs > 0) continue;
+        if (!armed && k.sessionId === h.owner) continue;
+        if (Math.hypot(k.x - h.x, k.y - h.y) > 58) continue;
+
+        if (k.shieldMs > 0) {
+          k.shieldMs = 0;
+          this.broadcast("fx", { type: "blocked", id: k.sessionId });
+        } else {
+          k.stunMs = CONFIG.oilSpinMs;
+          this.broadcast("fx", { type: "spin", id: k.sessionId });
+          this.openQuiz(k, "escape");
+        }
+        this.state.hazards.splice(i, 1);
+        this.hazardArm.delete(h.id);
+        break;
+      }
+    }
+  }
+
+  private recomputeRanks(karts: KartState[]) {
+    const sorted = [...karts].sort((a, b) => {
+      if (a.finished && b.finished) return a.finishMs - b.finishMs;
+      if (a.finished) return -1;
+      if (b.finished) return 1;
+      return (b.lap * this.track.total + b.s) - (a.lap * this.track.total + a.s);
+    });
+    sorted.forEach((k, i) => (k.rank = i + 1));
   }
 
   // ---------- 아이템 ----------
 
-  private useItem(client: Client) {
+  private useItem(sessionId: string) {
     if (this.state.phase !== "racing") return;
-    const p = this.state.players.get(client.sessionId);
-    if (!p || !p.currentItem) return;
+    const k = this.state.karts.get(sessionId);
+    if (!k || !k.item || k.finished || k.stunMs > 0) return;
 
-    const item = p.currentItem as ItemId;
-    p.currentItem = "";
+    const item = k.item as ItemId;
+    k.item = "";
 
-    if (item === "booster") {
-      this.addEffect(p, "booster", ITEMS.booster.multiplier!, ITEMS.booster.durationMs);
-      this.broadcast("item_used", { item, source: p.sessionId, target: p.sessionId, blocked: false });
+    if (item === "boost") {
+      k.speedMul = CONFIG.boostMul;
+      k.boostMs = CONFIG.boostMs;
+      this.broadcast("fx", { type: "boost", id: k.sessionId });
       return;
     }
 
     if (item === "shield") {
-      this.addEffect(p, "shield", 1, ITEMS.shield.durationMs);
-      this.broadcast("item_used", { item, source: p.sessionId, target: p.sessionId, blocked: false });
+      k.shieldMs = CONFIG.shieldMs;
+      this.broadcast("fx", { type: "shield", id: k.sessionId });
       return;
     }
 
-    // rocket: 바로 앞 상대 자동 타겟
-    const target = [...this.state.players.values()]
-      .filter((o) => o !== p && o.progress > p.progress)
-      .sort((a, b) => a.progress - b.progress)[0];
+    if (item === "oil") {
+      const h = new HazardState();
+      h.id = `oil-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      h.owner = k.sessionId;
+      h.x = k.x - Math.cos(k.heading) * 70;
+      h.y = k.y - Math.sin(k.heading) * 70;
+      this.state.hazards.push(h);
+      this.hazardArm.set(h.id, Date.now() + CONFIG.oilArmMs);
+      this.broadcast("fx", { type: "oil", id: k.sessionId, x: h.x, y: h.y });
+      return;
+    }
+
+    // bomb: 바로 앞 순위 1명
+    const target = [...this.state.karts.values()]
+      .filter((o) => o.sessionId !== k.sessionId && !o.finished && o.rank < k.rank)
+      .sort((a, b) => b.rank - a.rank)[0];
     if (!target) return;
 
-    if (target.shieldActive) {
-      this.removeEffect(target, "shield"); // 방패 소모
-      target.shieldActive = false;
-      this.broadcast("item_used", { item, source: p.sessionId, target: target.sessionId, blocked: true });
+    if (target.shieldMs > 0) {
+      target.shieldMs = 0;
+      this.broadcast("fx", { type: "blocked", id: target.sessionId, from: k.sessionId });
     } else {
-      this.addEffect(target, "rocket", ITEMS.rocket.multiplier!, ITEMS.rocket.durationMs);
-      this.broadcast("item_used", { item, source: p.sessionId, target: target.sessionId, blocked: false });
+      target.stunMs = CONFIG.stunMs;
+      this.broadcast("fx", { type: "bomb", id: target.sessionId, from: k.sessionId });
+      this.openQuiz(target, "escape"); // 갇혔을 때 문제를 풀면 탈출
     }
+  }
+
+  // ---------- 퀴즈 ----------
+
+  private openQuiz(k: KartState, kind: QuizKind) {
+    if (k.quizActive || k.finished) return;
+    const now = Date.now();
+    // escape 퀴즈는 쿨다운을 무시한다 — 갇혔는데 문제가 안 나오면 답이 없다
+    if (kind !== "escape" && now - (this.lastQuizAt.get(k.sessionId) ?? 0) < CONFIG.quizCooldownMs) return;
+
+    const q = this.dispenser.next();
+    k.quizActive = true;
+    k.quizKind = kind;
+    this.lastQuizAt.set(k.sessionId, now);
+
+    const timer = this.clock.setTimeout(() => this.resolveQuiz(k.sessionId, ""), CONFIG.quizMs);
+    this.pending.set(k.sessionId, {
+      q, kind, correctLabel: gateLabel(q.correctIndex), timer,
+    });
+
+    // 정답은 보내지 않는다
+    const client = this.clients.find((c) => c.sessionId === k.sessionId);
+    client?.send("quiz_open", {
+      kind,
+      qId: q.id,
+      text: q.text,
+      options: q.options.map((t, i) => ({ label: gateLabel(i), text: t })),
+      ms: kind === "escape" ? Math.min(CONFIG.quizMs, CONFIG.stunMs) : CONFIG.quizMs,
+    });
+  }
+
+  private resolveQuiz(sessionId: string, choice: string) {
+    const pend = this.pending.get(sessionId);
+    const k = this.state.karts.get(sessionId);
+    if (!pend || !k) return;
+
+    pend.timer?.clear?.();
+    this.pending.delete(sessionId);
+
+    const correct = choice !== "" && choice === pend.correctLabel;
+    k.quizActive = false;
+    k.quizKind = "";
+    k.answerCount += 1;
+    if (correct) k.correctCount += 1;
+
+    this.askedLog.push({ sessionId, qId: pend.q.id, correct, kind: pend.kind });
+
+    let effect = "";
+    if (pend.kind === "item") {
+      if (correct) {
+        const others = [...this.state.karts.values()].filter((o) => o.sessionId !== sessionId);
+        const hasTarget = others.some((o) => o.rank < k.rank && !o.finished);
+        k.item = grantItem(k.rank, this.state.karts.size, hasTarget);
+        effect = `아이템 획득: ${k.item}`;
+      } else {
+        effect = "아이템 놓침";
+      }
+    } else if (pend.kind === "block") {
+      if (correct) {
+        k.speedMul = CONFIG.blockCorrectBoost;
+        k.boostMs = CONFIG.blockCorrectMs;
+        effect = "부스트!";
+      } else {
+        k.speedMul = CONFIG.blockWrongMul;
+        k.boostMs = CONFIG.blockWrongMs;
+        effect = "감속";
+      }
+    } else {
+      // escape
+      if (correct) {
+        k.stunMs = 0;
+        effect = "탈출!";
+      } else {
+        effect = "탈출 실패";
+      }
+    }
+
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+    client?.send("quiz_result", {
+      correct,
+      correctLabel: pend.correctLabel,
+      explanation: pend.q.explanation,
+      sourceName: pend.q.sourceName,
+      kind: pend.kind,
+      effect,
+    });
   }
 
   // ---------- 종료 ----------
 
-  private endMatch() {
+  private endRace() {
+    if (this.state.phase === "finished") return;
     this.state.phase = "finished";
 
-    const players = [...this.state.players.values()].sort((a, b) => b.progress - a.progress);
-    const raceScoreByRank = [100, 60];
+    const karts = [...this.state.karts.values()].sort((a, b) => a.rank - b.rank);
+    const n = karts.length;
 
-    const results = players.map((p, i) => {
-      const correctCount = p.answers.filter((a) => a.correct).length;
-      // [신규] 승부를 걸어 맞힌 문제는 IP 점수에 가산. 아는 걸 아는 것도 실력.
-      const riskWins = p.answers.filter((a) => a.correct && a.bet === "risk").length;
-      const ipScore = Math.min(
-        100,
-        Math.round((correctCount / CONFIG.gateCount) * 100 + riskWins * 3)
-      );
-      const raceScore = raceScoreByRank[i] ?? 40;
-      const finalScore = Math.round(raceScore * 0.5 + ipScore * 0.5);
+    const results = karts.map((k, i) => {
+      const raceScore = Math.round(100 - (i / Math.max(1, n - 1)) * 40); // 1위 100 ~ 꼴찌 60
+      const ipScore = k.answerCount > 0
+        ? Math.round((k.correctCount / k.answerCount) * 100)
+        : 0;
       return {
-        sessionId: p.sessionId,
-        nickname: p.nickname,
-        raceRank: i + 1,
+        sessionId: k.sessionId,
+        nickname: k.nickname,
+        rank: i + 1,
+        lap: k.lap,
+        finished: k.finished,
+        timeMs: k.finished ? k.finishMs - this.raceStart : 0,
         raceScore,
         ipScore,
-        finalScore,
-        riskWins,
+        correctCount: k.correctCount,
+        answerCount: k.answerCount,
+        finalScore: Math.round(raceScore * 0.5 + ipScore * 0.5),
       };
     });
 
-    const review = this.questions.map((q, gi) => ({
-      gateIndex: gi,
-      qId: q.id,
-      text: q.text,
-      options: q.options.map((t, i) => ({ label: gateLabel(i), text: t })),
-      correctLabel: gateLabel(q.correctIndex),
-      explanation: q.explanation,
-      sourceName: q.sourceName,
-      sourceUrl: q.sourceUrl,
-      chosenByPlayer: players.map((p) => ({
-        sessionId: p.sessionId,
-        chosen: p.answers[gi]?.chosen || "",
-        correct: p.answers[gi]?.correct || false,
-        bet: p.answers[gi]?.bet || "safe",
-      })),
-    }));
+    // IP Review: 이 판에 실제로 나온 문제만, 정답·해설과 함께 이 시점에 공개
+    const seen = new Set<string>();
+    const review = this.askedLog
+      .filter((a) => {
+        const key = a.qId;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((a) => {
+        const q = require("./questions").QUESTIONS.find((x: Question) => x.id === a.qId)!;
+        return {
+          qId: q.id,
+          text: q.text,
+          options: q.options.map((t: string, i: number) => ({ label: gateLabel(i), text: t })),
+          correctLabel: gateLabel(q.correctIndex),
+          explanation: q.explanation,
+          sourceName: q.sourceName,
+          sourceUrl: q.sourceUrl,
+          perPlayer: this.askedLog
+            .filter((x) => x.qId === q.id)
+            .map((x) => ({ sessionId: x.sessionId, correct: x.correct, kind: x.kind })),
+        };
+      });
 
-    this.broadcast("match_end", { results, review });
+    this.broadcast("race_end", { results, review });
   }
 }
 
-/** 사람이 읽기 쉬운 6자리 방 코드. 0/O/1/I 제외. */
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+
 function makeRoomCode(): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s = "";

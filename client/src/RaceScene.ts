@@ -1,288 +1,332 @@
 // ============================================================
-// RaceScene — 진행도 기반 렌더링 + 타격감 레이어 (Stage 1.5)
+// RaceScene — 탑다운 카트 레이싱 (Stage 2)
 //
-// 추가된 연출:
-//  ① 히트스톱  : 정답 순간 60ms 시간 정지 → 화면 플래시 → 스쿼시&스트레치
-//  ② 스피드감  : 차선 대시 스크롤 + 배수>1일 때 스피드라인 + 잔상
-//  ③ 카메라    : 정답/오답/피격이 서로 다른 흔들림 패턴
-//  ④ 결승선    : 슬로모션 진입
-//
-// 파티클 100개보다 히트스톱 3줄이 체감이 크다. 순서대로 넣을 것.
+// 렌더링 구조:
+//  · world 컨테이너를 카메라가 따라간다 (내 카트 중심)
+//  · 내 카트는 로컬 예측(prediction)으로 즉시 반응하고, 서버 좌표로 부드럽게 보정
+//    → 이게 없으면 방향키를 눌러도 100ms 뒤에 도는 느낌이 난다
+//  · 남의 카트는 서버 좌표로 보간만
 // ============================================================
 
 import Phaser from "phaser";
-import { net } from "./net";
+import { net, InputState } from "./net";
+import { KartBody, stepKart } from "./physics";
+import { buildTrack, project, TrackData } from "./track";
 
-const TRACK_LENGTH = 6000; // 서버 CONFIG와 일치시킬 것
-const GATE_POSITIONS = [700, 1550, 2450, 3350, 4250, 5200];
-const MARGIN = 60;
-
-const ITEM_EMOJI: Record<string, string> = { rocket: "🚀", shield: "🛡️", booster: "💨", "": "—" };
-const COLOR = { self: 0x4da3ff, rival: 0xff9f43, good: 0x37d67a, bad: 0xff5d6c };
+const COLORS = [0x4da3ff, 0xff9f43, 0x37d67a, 0xc77dff];
+const ITEM_EMOJI: Record<string, string> = {
+  bomb: "💧", boost: "🔥", oil: "🛢", shield: "🛡", "": "",
+};
 
 export class RaceScene extends Phaser.Scene {
-  private cars: Record<string, Phaser.GameObjects.Container> = {};
-  private renderX: Record<string, number> = {};
-  private laneOf: Record<string, number> = {};
-  private hud!: Phaser.GameObjects.Text;
-  private flash!: Phaser.GameObjects.Rectangle;
-  private dashG!: Phaser.GameObjects.Graphics;
-  private dashOffset = 0;
-  private trailTimer = 0;
-  private finished = false;
+  private world!: Phaser.GameObjects.Container;
+  private trackG!: Phaser.GameObjects.Graphics;
+  private fxG!: Phaser.GameObjects.Graphics;
+  private track: TrackData | null = null;
+
+  private karts: Record<string, Phaser.GameObjects.Container> = {};
+  private ghost: Record<string, { x: number; y: number; heading: number }> = {};
+  private pickupG: Record<string, Phaser.GameObjects.Container> = {};
+  private hazardG: Record<string, Phaser.GameObjects.Container> = {};
+
+  private local: KartBody = { x: 0, y: 0, heading: 0, speed: 0, driftCharge: 0, drifting: false };
+  private localReady = false;
+
+  private keys!: Record<string, Phaser.Input.Keyboard.Key>;
+  // ⚠️ Phaser Scene 은 이미 this.input(InputPlugin)을 쓴다. 이름을 겹치면 안 된다.
+  private ctrl: InputState = { throttle: 0, steer: 0, drift: false };
+  private camX = 0;
+  private camY = 0;
 
   constructor() { super("race"); }
 
   create() {
-    const W = this.scale.width, H = this.scale.height;
-    this.cameras.main.setBackgroundColor("#0a1020");
+    this.cameras.main.setBackgroundColor("#0b1220");
 
-    // --- 정적 트랙 ---
-    const g = this.add.graphics();
-    g.lineStyle(3, 0x2b3a57, 1);
-    const laneY = this.laneY();
-    laneY.forEach((y) => g.lineBetween(MARGIN, y, W - MARGIN, y));
+    this.world = this.add.container(0, 0);
+    this.trackG = this.add.graphics();
+    this.fxG = this.add.graphics();
+    this.world.add(this.trackG);
+    this.world.add(this.fxG);
 
-    GATE_POSITIONS.forEach((pos, i) => {
-      const x = this.posToX(pos);
-      g.lineStyle(2, 0x3a4a6a, 1).lineBetween(x, H * 0.32, x, H * 0.72);
-      this.add.text(x - 6, H * 0.26, `${i + 1}`, { fontSize: "11px", color: "#5a6d92" });
-    });
-    g.lineStyle(4, 0xffffff, 0.6).lineBetween(W - MARGIN, H * 0.28, W - MARGIN, H * 0.76);
+    const kb = this.input.keyboard!;
+    this.keys = {
+      up: kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+      down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
+      left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
+      right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+      drift: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+      item: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+    };
+    kb.on("keydown-SPACE", () => net.useItem());
 
-    // --- 스크롤 대시(속도감) ---
-    this.dashG = this.add.graphics();
-
-    this.hud = this.add.text(16, 12, "", { fontSize: "14px", color: "#9fb0d0" });
-
-    // --- 화면 플래시 오버레이 ---
-    this.flash = this.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 0).setDepth(999);
-
-    // --- 입력 ---
-    this.input.keyboard?.on("keydown-ONE", () => net.useItem());
-    this.input.keyboard?.on("keydown-SPACE", () => this.onSpace());
-    this.input.keyboard?.on("keydown-LEFT", () => this.tryChoose("A"));
-    this.input.keyboard?.on("keydown-DOWN", () => this.tryChoose("B"));
-    this.input.keyboard?.on("keydown-RIGHT", () => this.tryChoose("C"));
-
-    // --- 서버 이벤트 → 연출 ---
-    net.on("gate_resolved", (d: any) => this.onGateResolved(d));
-    net.on("item_used", (d: any) => this.onItemUsed(d));
-    net.on("match_end", () => this.onMatchEnd());
+    net.on("fx", (d: any) => this.onFx(d));
+    if (net.track) this.buildTrackGraphics();
+    else net.on("track", () => this.buildTrackGraphics());
   }
 
-  /** Space는 맥락에 따라 다르게 동작한다: 레이스 중엔 아이템, READ 중엔 승부 토글. */
-  private onSpace() {
-    const phase = net.state?.phase;
-    if (phase === "racing") return net.useItem();
-    if (phase === "quiz_read") {
-      const cur = net.me()?.bet === "risk" ? "safe" : "risk";
-      net.setBet(cur);
-    }
+  // ---------- 트랙 ----------
+
+  private buildTrackGraphics() {
+    if (!net.track || this.track) return;
+    this.track = buildTrack(net.track.points, net.track.width);
+    const pts = this.track.points;
+    const w = this.track.width;
+
+    this.trackG.clear();
+    // 아스팔트: 두꺼운 닫힌 폴리라인
+    this.trackG.lineStyle(w, 0x1b2740, 1);
+    this.strokeLoop(this.trackG, pts);
+    // 가장자리 라인
+    this.trackG.lineStyle(w - 14, 0x233251, 1);
+    this.strokeLoop(this.trackG, pts);
+    // 중앙 파선
+    this.trackG.lineStyle(3, 0x35496f, 0.8);
+    this.strokeLoop(this.trackG, pts);
+
+    // 코너 꼭짓점을 둥글게 메워 이음새를 감춘다
+    this.trackG.fillStyle(0x233251, 1);
+    pts.forEach((p) => this.trackG.fillCircle(p[0], p[1], (w - 14) / 2));
+
+    // 출발선
+    const a = pts[0], b = pts[1];
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    this.trackG.lineStyle(8, 0xffffff, 0.85);
+    this.trackG.lineBetween(
+      a[0] - Math.sin(ang) * w / 2, a[1] + Math.cos(ang) * w / 2,
+      a[0] + Math.sin(ang) * w / 2, a[1] - Math.cos(ang) * w / 2
+    );
   }
 
-  private tryChoose(g: "A" | "B" | "C") {
-    if (net.state?.phase === "quiz_choose") net.choose(g);
+  private strokeLoop(g: Phaser.GameObjects.Graphics, pts: number[][]) {
+    g.beginPath();
+    g.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+    g.closePath();
+    g.strokePath();
   }
 
-  private laneY() { const H = this.scale.height; return [H * 0.42, H * 0.62]; }
+  // ---------- 입력 ----------
 
-  private posToX(pos: number) {
-    const W = this.scale.width;
-    return MARGIN + (pos / TRACK_LENGTH) * (W - 2 * MARGIN);
-  }
-
-  // ---------- 연출 ----------
-
-  /** ① 히트스톱: 짧은 시간 정지가 "맞았다"는 감각의 핵심이다. */
-  private hitStop(ms = 60) {
-    this.time.timeScale = 0.001;
-    this.tweens.timeScale = 0.001;
-    this.time.delayedCall(ms, () => {
-      this.time.timeScale = 1;
-      this.tweens.timeScale = 1;
-    }, [], this);
-    // delayedCall 자체도 timeScale 영향을 받으므로 실시간 타이머로 복구를 보장
-    window.setTimeout(() => { this.time.timeScale = 1; this.tweens.timeScale = 1; }, ms);
-  }
-
-  private screenFlash(color: number, alpha = 0.35, ms = 180) {
-    this.flash.setFillStyle(color, 1);
-    this.flash.setAlpha(alpha);
-    this.tweens.add({ targets: this.flash, alpha: 0, duration: ms, ease: "Quad.easeOut" });
-  }
-
-  /** 스쿼시&스트레치. 선형 트윈이면 싸구려로 보인다 — Back.easeOut 필수. */
-  private squash(car: Phaser.GameObjects.Container, sx: number, sy: number) {
-    car.setScale(sx, sy);
-    this.tweens.add({ targets: car, scaleX: 1, scaleY: 1, duration: 260, ease: "Back.easeOut" });
-  }
-
-  private popText(car: Phaser.GameObjects.Container, text: string, color: string) {
-    const t = this.add.text(car.x - 14, car.y - 46, text, {
-      fontSize: "16px", color, fontStyle: "bold",
-    }).setDepth(500);
-    this.tweens.add({
-      targets: t, y: t.y - 28, alpha: 0, duration: 700, ease: "Quad.easeOut",
-      onComplete: () => t.destroy(),
-    });
-  }
-
-  private onGateResolved(d: any) {
-    const mine = d?.perPlayer?.[net.selfId];
-    if (!mine) return;
-    const car = this.cars[net.selfId];
-
-    if (mine.passed) {
-      this.hitStop(mine.bet === "risk" ? 90 : 55);
-      this.screenFlash(mine.bet === "risk" ? 0xffe066 : 0x37d67a, mine.bet === "risk" ? 0.5 : 0.3);
-      this.cameras.main.shake(120, 0.004);
-      if (car) {
-        this.squash(car, 1.35, 0.7);
-        this.popText(car, mine.bet === "risk" ? "승부 성공!" : "정답", "#37d67a");
-        if (mine.streak >= 2) this.popText(car, `${mine.streak} COMBO`, "#ffe066");
-      }
-    } else {
-      // 오답은 진폭이 크고 느린 다른 패턴 — 피드백이 구분되어야 한다.
-      this.cameras.main.shake(mine.bet === "risk" ? 420 : 220, mine.bet === "risk" ? 0.012 : 0.006);
-      this.screenFlash(0xff5d6c, 0.28, 260);
-      if (car) {
-        this.squash(car, 0.7, 1.3);
-        this.popText(car, mine.bet === "risk" ? "스핀아웃!" : "오답", "#ff5d6c");
-        if (mine.bet === "risk") {
-          this.tweens.add({ targets: car, angle: 360, duration: 500, ease: "Quad.easeOut",
-            onComplete: () => car.setAngle(0) });
-        }
-      }
-    }
-  }
-
-  private onItemUsed(d: any) {
-    const car = this.cars[d?.target];
-    if (!car) return;
-    if (d.blocked) {
-      this.popText(car, "BLOCKED", "#4da3ff");
-      this.screenFlash(0x4da3ff, 0.2, 140);
-      return;
-    }
-    if (d.item === "rocket") {
-      this.cameras.main.shake(260, 0.008);
-      this.squash(car, 0.75, 1.25);
-      this.popText(car, "🚀", "#ff5d6c");
-    } else if (d.item === "booster") {
-      this.squash(car, 1.3, 0.8);
-      this.popText(car, "💨", "#37d67a");
-    } else if (d.item === "shield") {
-      this.popText(car, "🛡️", "#4da3ff");
-    }
-  }
-
-  private onMatchEnd() {
-    if (this.finished) return;
-    this.finished = true;
-    // 마지막 인상이 게임 평가를 결정한다 — 슬로모션으로 마무리.
-    this.tweens.addCounter({
-      from: 1, to: 0.25, duration: 700, ease: "Quad.easeOut",
-      onUpdate: (tw) => { this.time.timeScale = tw.getValue() ?? 1; },
-    });
-    this.screenFlash(0xffffff, 0.5, 500);
-  }
-
-  /** ② 잔상: 부스트 중일 때만 남긴다. 항상 남기면 속도 대비가 사라진다. */
-  private emitTrail(car: Phaser.GameObjects.Container, color: number) {
-    const r = this.add.rectangle(car.x, car.y, 34, 20, color, 0.45).setDepth(1);
-    this.tweens.add({
-      targets: r, alpha: 0, scaleX: 0.6, x: r.x - 26, duration: 320, ease: "Quad.easeOut",
-      onComplete: () => r.destroy(),
-    });
-  }
-
-  private emitSpeedLine(car: Phaser.GameObjects.Container) {
-    const y = car.y + Phaser.Math.Between(-14, 14);
-    const l = this.add.rectangle(car.x - 24, y, Phaser.Math.Between(18, 40), 2, 0xbcd6ff, 0.7).setDepth(1);
-    this.tweens.add({
-      targets: l, x: l.x - 140, alpha: 0, duration: 260, ease: "Quad.easeIn",
-      onComplete: () => l.destroy(),
-    });
+  private readInput() {
+    const k = this.keys;
+    this.ctrl.throttle = k.up.isDown ? 1 : k.down.isDown ? -1 : 0;
+    this.ctrl.steer = k.left.isDown ? -1 : k.right.isDown ? 1 : 0;
+    this.ctrl.drift = k.drift.isDown;
+    net.sendInput(this.ctrl);
   }
 
   // ---------- 루프 ----------
 
-  update(_t: number, dt: number) {
+  update(_t: number, dtMs: number) {
     const state = net.state;
-    if (!state) return;
-    const W = this.scale.width, H = this.scale.height;
-    const laneY = this.laneY();
+    if (!state || !this.track) return;
+    const dt = Math.min(dtMs, 50) / 1000;
 
-    const players: any[] = [...state.players.values()];
+    const racing = state.phase === "racing";
+    if (racing) this.readInput();
 
-    // 내가 항상 위 레인. 자기 차를 찾기 쉬워야 한다.
-    const ordered = [...players].sort((a, b) =>
-      (a.sessionId === net.selfId ? -1 : 0) - (b.sessionId === net.selfId ? -1 : 0));
+    const me = net.me();
 
-    let leaderSpeed = 1;
-
-    ordered.forEach((p, i) => {
-      if (!this.cars[p.sessionId]) {
-        this.laneOf[p.sessionId] = i;
-        this.cars[p.sessionId] = this.makeCar(p, laneY[i] ?? laneY[0]);
+    // 내 카트: 로컬 예측 + 서버 보정
+    if (me) {
+      if (!this.localReady) {
+        this.local = {
+          x: me.x, y: me.y, heading: me.heading, speed: me.speed,
+          driftCharge: 0, drifting: false,
+        };
+        this.localReady = true;
       }
-      const targetX = this.posToX(p.progress);
-      this.renderX[p.sessionId] = Phaser.Math.Linear(this.renderX[p.sessionId] ?? targetX, targetX, 0.25);
-      const car = this.cars[p.sessionId];
-      car.x = this.renderX[p.sessionId];
-
-      const isSelf = p.sessionId === net.selfId;
-      leaderSpeed = Math.max(leaderSpeed, p.speedMultiplier);
-
-      (car.getData("nick") as Phaser.GameObjects.Text).setText(
-        `${p.nickname} ${ITEM_EMOJI[p.currentItem] ?? "—"}${p.shieldActive ? "🛡" : ""}` +
-        (state.phase === "quiz_read" && p.bet === "risk" ? " 🔥승부" : "")
-      );
-
-      const body = car.getData("body") as Phaser.GameObjects.Rectangle;
-      body.setFillStyle(isSelf ? COLOR.self : COLOR.rival);
-      // 감속 중엔 어둡게, 가속 중엔 밝게 — 상태가 색으로 읽혀야 한다.
-      body.setAlpha(p.speedMultiplier < 1 ? 0.55 : 1);
-
-      // 부스트 중 잔상 + 스피드라인
-      if (p.speedMultiplier > 1.05 && state.phase === "racing") {
-        this.trailTimer += dt;
-        if (this.trailTimer > 45) {
-          this.trailTimer = 0;
-          this.emitTrail(car, isSelf ? COLOR.self : COLOR.rival);
-          this.emitSpeedLine(car);
-        }
+      if (racing && !me.finished) {
+        const pr = project(this.track, this.local.x, this.local.y);
+        stepKart(this.local, this.ctrl, dt, {
+          offTrack: pr.offTrack,
+          speedMul: me.speedMul,
+          stunned: me.stunMs > 0,
+        });
       }
-    });
-
-    // ③ 차선 대시 스크롤 — 2D에서 "속도"는 차가 아니라 배경이 만든다.
-    if (state.phase === "racing") this.dashOffset -= leaderSpeed * dt * 0.35;
-    this.dashG.clear();
-    this.dashG.lineStyle(2, 0x22304c, 1);
-    for (const y of laneY) {
-      for (let x = MARGIN; x < W - MARGIN; x += 40) {
-        const dx = ((x + this.dashOffset) % 40 + 40) % 40 + MARGIN;
-        if (dx > W - MARGIN - 16) continue;
-        this.dashG.lineBetween(dx, y + 16, dx + 16, y + 16);
+      // 서버와 벌어지면 부드럽게 끌어당긴다. 많이 벌어지면 즉시 스냅.
+      const drift = Math.hypot(me.x - this.local.x, me.y - this.local.y);
+      if (drift > 260) {
+        this.local.x = me.x; this.local.y = me.y;
+        this.local.heading = me.heading; this.local.speed = me.speed;
+      } else {
+        this.local.x += (me.x - this.local.x) * 0.10;
+        this.local.y += (me.y - this.local.y) * 0.10;
+        this.local.heading += angleDiff(me.heading, this.local.heading) * 0.10;
       }
     }
 
-    const me = net.me();
-    this.hud.setText(
-      `phase: ${state.phase}   gate: ${state.currentGateIndex}/6` +
-      (me ? `   speed: ×${me.speedMultiplier.toFixed(2)}   streak: ${me.streak}` : "") +
-      (state.phase === "countdown" ? `   시작: ${state.countdown}` : "")
-    );
+    // 카트 렌더
+    const karts: any[] = [...state.karts.values()];
+    karts.forEach((k, i) => {
+      if (!this.karts[k.sessionId]) this.karts[k.sessionId] = this.makeKart(k, i);
+      const c = this.karts[k.sessionId];
+      const isSelf = k.sessionId === net.selfId;
+
+      let px: number, py: number, ph: number;
+      if (isSelf) {
+        px = this.local.x; py = this.local.y; ph = this.local.heading;
+      } else {
+        const g = this.ghost[k.sessionId] ??= { x: k.x, y: k.y, heading: k.heading };
+        g.x += (k.x - g.x) * 0.25;
+        g.y += (k.y - g.y) * 0.25;
+        g.heading += angleDiff(k.heading, g.heading) * 0.25;
+        px = g.x; py = g.y; ph = g.heading;
+      }
+
+      c.x = px; c.y = py;
+      c.rotation = ph;
+
+      const body = c.getData("body") as Phaser.GameObjects.Rectangle;
+      body.setAlpha(k.stunMs > 0 ? 0.5 : 1);
+      (c.getData("shield") as Phaser.GameObjects.Arc).setVisible(k.shieldMs > 0);
+
+      const label = c.getData("label") as Phaser.GameObjects.Text;
+      label.setText(k.nickname + (k.quizActive ? " ❓" : ""));
+      label.setRotation(-ph); // 이름표는 항상 수평
+
+      // 드리프트 스파크 / 부스트 불꽃
+      if ((k.drifting && k.driftCharge > 0.5) || k.boostMs > 0) {
+        this.spark(px, py, ph, k.boostMs > 0 ? 0xffd166 : 0x8ea3c8);
+      }
+      if (k.offTrack && Math.abs(k.speed) > 60) this.spark(px, py, ph, 0x6b5b3a);
+    });
+
+    // 픽업
+    for (const p of state.pickups as any[]) {
+      let g = this.pickupG[p.id];
+      if (!g) g = this.pickupG[p.id] = this.makePickup(p);
+      g.setVisible(p.active);
+      g.rotation += dt * (p.kind === "item" ? 1.6 : 0.6);
+    }
+
+    // 기름
+    const liveIds = new Set<string>();
+    for (const h of state.hazards as any[]) {
+      liveIds.add(h.id);
+      if (!this.hazardG[h.id]) this.hazardG[h.id] = this.makeHazard(h);
+    }
+    for (const id of Object.keys(this.hazardG)) {
+      if (!liveIds.has(id)) { this.hazardG[id].destroy(); delete this.hazardG[id]; }
+    }
+
+    // 카메라: 내 카트를 화면 중앙에. 속도가 빠를수록 살짝 앞을 본다.
+    const target = me ? this.local : { x: 0, y: 0, heading: 0, speed: 0 };
+    const lead = Math.min(Math.abs((me?.speed ?? 0)) * 0.35, 220);
+    const tx = target.x + Math.cos(target.heading) * lead;
+    const ty = target.y + Math.sin(target.heading) * lead;
+    this.camX += (tx - this.camX) * 0.12;
+    this.camY += (ty - this.camY) * 0.12;
+
+    const zoom = 0.62;
+    this.world.setScale(zoom);
+    this.world.x = this.scale.width / 2 - this.camX * zoom;
+    this.world.y = this.scale.height / 2 - this.camY * zoom;
   }
 
-  private makeCar(p: any, y: number) {
-    const body = this.add.rectangle(0, 0, 34, 20, COLOR.self).setStrokeStyle(2, 0xffffff, 0.5);
-    const nick = this.add.text(-18, -30, p.nickname, { fontSize: "12px", color: "#e8eefc" });
-    const c = this.add.container(this.posToX(p.progress), y, [body, nick]).setDepth(10);
+  // ---------- 오브젝트 ----------
+
+  private makeKart(k: any, i: number) {
+    const color = COLORS[i % COLORS.length];
+    const body = this.add.rectangle(0, 0, 62, 34, color).setStrokeStyle(3, 0xffffff, 0.55);
+    const nose = this.add.triangle(34, 0, 0, -12, 0, 12, 16, 0, 0xffffff, 0.7);
+    const shield = this.add.circle(0, 0, 46, 0x4da3ff, 0.18).setStrokeStyle(2, 0x4da3ff, 0.8);
+    const label = this.add.text(0, -46, k.nickname, {
+      fontSize: "15px", color: "#e8eefc", fontStyle: "bold",
+    }).setOrigin(0.5);
+
+    const c = this.add.container(k.x, k.y, [shield, body, nose, label]).setDepth(20);
     c.setData("body", body);
-    c.setData("nick", nick);
-    this.renderX[p.sessionId] = this.posToX(p.progress);
+    c.setData("shield", shield);
+    c.setData("label", label);
+    this.world.add(c);
     return c;
   }
+
+  private makePickup(p: any) {
+    const isItem = p.kind === "item";
+    const box = isItem
+      ? this.add.rectangle(0, 0, 46, 46, 0x2f6fd0, 0.9).setStrokeStyle(3, 0x8fc4ff, 1)
+      : this.add.rectangle(0, 0, 52, 52, 0x8a5a2b, 0.9).setStrokeStyle(3, 0xffc78f, 1);
+    const mark = this.add.text(0, 0, isItem ? "?" : "IP", {
+      fontSize: isItem ? "26px" : "20px", color: "#ffffff", fontStyle: "bold",
+    }).setOrigin(0.5);
+    const c = this.add.container(p.x, p.y, [box, mark]).setDepth(8);
+    this.world.add(c);
+    return c;
+  }
+
+  private makeHazard(h: any) {
+    const pool = this.add.ellipse(0, 0, 74, 52, 0x2a2015, 0.92).setStrokeStyle(2, 0x6b5b3a, 1);
+    const c = this.add.container(h.x, h.y, [pool]).setDepth(6);
+    this.world.add(c);
+    return c;
+  }
+
+  // ---------- 연출 ----------
+
+  private spark(x: number, y: number, heading: number, color: number) {
+    const bx = x - Math.cos(heading) * 34 + Phaser.Math.Between(-8, 8);
+    const by = y - Math.sin(heading) * 34 + Phaser.Math.Between(-8, 8);
+    const s = this.add.circle(bx, by, Phaser.Math.Between(3, 7), color, 0.85).setDepth(15);
+    this.world.add(s);
+    this.tweens.add({
+      targets: s, alpha: 0, scale: 0.3, duration: 300, ease: "Quad.easeOut",
+      onComplete: () => s.destroy(),
+    });
+  }
+
+  private onFx(d: any) {
+    const c = this.karts[d.id];
+    const isMe = d.id === net.selfId;
+
+    switch (d.type) {
+      case "drift_boost":
+      case "boost":
+        if (isMe) this.cameras.main.shake(160, 0.004);
+        if (c) this.pop(c, "🔥", "#ffd166");
+        break;
+      case "bomb":
+      case "spin":
+        if (isMe) this.cameras.main.shake(380, 0.011);
+        if (c) this.pop(c, "💧", "#4da3ff");
+        break;
+      case "blocked":
+        if (c) this.pop(c, "BLOCK", "#4da3ff");
+        break;
+      case "shield":
+        if (c) this.pop(c, "🛡", "#4da3ff");
+        break;
+      case "pickup":
+        if (c) this.pop(c, d.kind === "item" ? "?" : "IP", "#ffffff");
+        break;
+      case "lap":
+        if (isMe) this.pop(c, `LAP ${d.lap + 1}`, "#37d67a");
+        break;
+      case "finish":
+        if (isMe) this.cameras.main.flash(400, 255, 255, 255);
+        break;
+    }
+  }
+
+  private pop(c: Phaser.GameObjects.Container | undefined, text: string, color: string) {
+    if (!c) return;
+    const t = this.add.text(c.x, c.y - 60, text, {
+      fontSize: "22px", color, fontStyle: "bold",
+    }).setOrigin(0.5).setDepth(50);
+    this.world.add(t);
+    this.tweens.add({
+      targets: t, y: t.y - 40, alpha: 0, duration: 750, ease: "Quad.easeOut",
+      onComplete: () => t.destroy(),
+    });
+  }
+}
+
+/** 각도 차이를 -π..π 로 정규화 */
+function angleDiff(target: number, current: number) {
+  let d = target - current;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
 }
