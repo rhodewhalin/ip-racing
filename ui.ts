@@ -1,7 +1,9 @@
 // ============================================================
-// DOM 오버레이 제어 (로비 / 퀴즈 / 결과·리뷰).
-// 텍스트 중심 UI는 Phaser 캔버스보다 DOM이 다루기 쉽고 접근성도 좋다.
-// 레이스 연출만 Phaser, 나머지는 DOM — 의도된 분업.
+// DOM 오버레이 제어 (로비 / 퀴즈 / 결과·리뷰)
+//
+// [변경] ① 퀴즈가 전체화면을 덮지 않는다 → 하단 패널.
+//          레이스와 퀴즈가 한 화면에 공존해야 두 재미가 서로를 죽이지 않는다.
+//        ② READ 단계에 확신도 베팅 UI 추가 (클릭 또는 Space).
 // ============================================================
 
 import { net } from "./net";
@@ -51,20 +53,18 @@ export const ui = {
 
     $("btnReady").addEventListener("click", () => { net.ready(); this.lobbyMsg("준비 완료. 상대를 기다립니다…"); });
 
-    // 방 생성/입장 이후에 상태 구독을 붙인다(그 전엔 room이 없어 무효).
     this._onStart = onStart;
   },
 
   _onStart: (() => {}) as () => void,
 
-  /** 방에 연결된 직후 호출: 상태가 올 때마다 로비 화면을 갱신하고, 시작되면 게임으로 넘긴다 */
   attachRoomState() {
     net.onState((s: any) => {
       $("roomcode").textContent = s.roomCode || "…";
       if (s.phase === "countdown") this.hide("lobby");
       if (s.phase !== "lobby" && s.phase !== "countdown") { this.hide("lobby"); this._onStart(); }
+      this.syncBetUI();
     });
-    // 이미 도착해 있는 상태가 있으면 즉시 반영
     if (net.state?.roomCode) $("roomcode").textContent = net.state.roomCode;
   },
 
@@ -72,7 +72,6 @@ export const ui = {
     $("btnCreate").parentElement!.classList.add("hidden");
     $("joinbox").classList.add("hidden");
     this.show("waiting");
-    // roomCode는 state가 도착하면 채워진다(아래 onState에서 갱신)
     $("roomcode").textContent = net.roomCode() || "…";
   },
   lobbyMsg(m: string) { $("lobbyMsg").textContent = m; },
@@ -81,15 +80,19 @@ export const ui = {
   bindQuiz() {
     net.on("question_start", (q: any) => this.renderQuizRead(q));
     net.on("choose_open", () => this.openChoose());
-    net.on("gate_resolved", () => this.hide("quiz"));
+    net.on("gate_resolved", (d: any) => this.onResolved(d));
+
+    $("betSafe").addEventListener("click", () => net.setBet("safe"));
+    $("betRisk").addEventListener("click", () => net.setBet("risk"));
   },
 
   renderQuizRead(q: any) {
     this.show("quiz");
     const panel = $("quiz");
-    panel.classList.remove("choose");
+    panel.classList.remove("choose", "locked");
     $("qmeta").textContent = `Q${q.gateIndex + 1} / 6`;
     $("qtext").textContent = q.text;
+
     const gates = $("gates");
     gates.innerHTML = "";
     q.options.forEach((o: any) => {
@@ -103,26 +106,60 @@ export const ui = {
       el.addEventListener("click", () => this.pick(o.label));
       gates.appendChild(el);
     });
-    // READ: 타이머 가득
+
+    // 베팅 UI 노출 + 기본값(안전)
+    if (q.betEnabled) this.show("betbox"); else this.hide("betbox");
+    this.syncBetUI();
+
     const fill = $("timerfill");
     fill.style.transition = "none";
     fill.style.width = "100%";
+    fill.style.background = "var(--accent)";
+  },
+
+  /** 내 베팅 상태를 버튼에 반영 (서버 state가 진실이다) */
+  syncBetUI() {
+    const bet = net.me()?.bet ?? "safe";
+    $("betSafe").classList.toggle("on", bet === "safe");
+    $("betRisk").classList.toggle("on", bet === "risk");
+
+    // 상대 베팅 표시 — 심리전의 재료
+    const opp = [...(net.state?.players?.values?.() ?? [])]
+      .find((p: any) => p.sessionId !== net.selfId) as any;
+    $("oppbet").textContent =
+      opp && net.state?.phase === "quiz_read"
+        ? `${opp.nickname}: ${opp.bet === "risk" ? "🔥 승부" : "🛡 안전"}`
+        : "";
   },
 
   openChoose() {
-    $("quiz").classList.add("choose");
-    // 3초 카운트다운 애니메이션
+    const panel = $("quiz");
+    panel.classList.add("choose", "locked"); // locked = 베팅 잠금(회색 처리)
+
     const fill = $("timerfill");
     const dur = net.state?.chooseMs ?? 3000;
     fill.style.transition = "none";
     fill.style.width = "100%";
-    // 강제 리플로우 후 트랜지션 시작
     void fill.offsetWidth;
     fill.style.transition = `width ${dur}ms linear`;
     fill.style.width = "0%";
-    // 마지막 구간 색 경고
     setTimeout(() => (fill.style.background = "var(--bad)"), Math.max(0, dur - 1000));
-    setTimeout(() => (fill.style.background = "var(--accent)"), dur);
+  },
+
+  /** 결과를 0.9초 보여준 뒤 닫는다. 즉시 사라지면 피드백이 안 읽힌다. */
+  onResolved(d: any) {
+    const mine = d?.perPlayer?.[net.selfId];
+    const panel = $("quiz");
+    if (mine) {
+      panel.classList.add(mine.passed ? "ok" : "no");
+      $("qmeta").textContent = mine.passed
+        ? (mine.bet === "risk" ? "🔥 승부 성공 — 부스트!" : "✅ 정답")
+        : (mine.bet === "risk" ? "💥 승부 실패 — 스핀아웃" : "❌ 오답");
+    }
+    setTimeout(() => {
+      this.hide("quiz");
+      panel.classList.remove("ok", "no", "choose", "locked");
+    }, 900);
   },
 
   pick(label: string) {
@@ -146,7 +183,7 @@ export const ui = {
       .map(
         (r: any) =>
           `<div class="score"><span>${r.raceRank}위 · <b>${r.nickname}</b></span>` +
-          `<span>Race ${r.raceScore} · IP ${r.ipScore} · <b>Final ${r.finalScore}</b></span></div>`
+          `<span>Race ${r.raceScore} · IP ${r.ipScore}${r.riskWins ? ` (승부 ${r.riskWins})` : ""} · <b>Final ${r.finalScore}</b></span></div>`
       )
       .join("");
 
@@ -156,9 +193,10 @@ export const ui = {
         const mine = q.chosenByPlayer.find((c: any) => c.sessionId === net.selfId);
         const correct = mine?.correct;
         const chosen = mine?.chosen || "미선택";
+        const bet = mine?.bet === "risk" ? "🔥승부" : "🛡안전";
         return (
           `<div class="q ${correct ? "" : "wrong"}">` +
-          `<div class="tag">Q${q.gateIndex + 1} · ${correct ? '<span class="badge ok">정답</span>' : '<span class="badge no">오답</span>'}</div>` +
+          `<div class="tag">Q${q.gateIndex + 1} · ${correct ? '<span class="badge ok">정답</span>' : '<span class="badge no">오답</span>'} · ${bet}</div>` +
           `<div><b>${q.text}</b></div>` +
           `<div class="tag">내 선택: ${chosen} · 정답: ${q.correctLabel}</div>` +
           `<div>💡 ${q.explanation}</div>` +
