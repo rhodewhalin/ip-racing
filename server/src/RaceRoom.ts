@@ -39,6 +39,8 @@ export class RaceRoom extends Room<RoomState> {
   private dispenser = new QuestionDispenser();
   private respawnAt = new Map<string, number>();
   private hazardArm = new Map<string, number>();
+  private offMs = new Map<string, number>();      // 코스 이탈 지속 시간
+  private lastGoodS = new Map<string, number>();  // 마지막으로 코스 위에 있던 지점
   private raceStart = 0;
   private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
@@ -93,6 +95,8 @@ export class RaceRoom extends Room<RoomState> {
     this.inputs.set(client.sessionId, { throttle: 0, steer: 0, drift: false });
     this.prevS.set(client.sessionId, 0);
     this.wasDrifting.set(client.sessionId, false);
+    this.offMs.set(client.sessionId, 0);
+    this.lastGoodS.set(client.sessionId, 0);
 
     // 트랙 지오메트리는 상태가 아니라 1회성 데이터 — 접속 시 한 번만 보낸다
     client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
@@ -104,6 +108,8 @@ export class RaceRoom extends Room<RoomState> {
     this.inputs.delete(id);
     this.prevS.delete(id);
     this.wasDrifting.delete(id);
+    this.offMs.delete(id);
+    this.lastGoodS.delete(id);
     const p = this.pending.get(id);
     if (p) { p.timer?.clear?.(); this.pending.delete(id); }
   }
@@ -167,7 +173,7 @@ export class RaceRoom extends Room<RoomState> {
       const input = this.inputs.get(k.sessionId)!;
       const body = {
         x: k.x, y: k.y, heading: k.heading, speed: k.speed,
-        driftCharge: k.driftCharge, drifting: k.drifting,
+        steerActual: k.steer, driftCharge: k.driftCharge, drifting: k.drifting,
       };
 
       stepKart(body, input, dt, {
@@ -187,12 +193,27 @@ export class RaceRoom extends Room<RoomState> {
 
       k.x = body.x; k.y = body.y; k.heading = body.heading;
       k.speed = body.speed;
+      k.steer = body.steerActual;
       k.drifting = body.drifting;
       k.driftCharge = body.drifting ? body.driftCharge : 0;
 
-      // 코스 판정
+      // 코스 판정 + 리스폰
       const pr = project(this.track, k.x, k.y);
       k.offTrack = pr.offTrack;
+      k.respawnMs = Math.max(0, k.respawnMs - dtMs);
+
+      if (!pr.offTrack) {
+        this.offMs.set(k.sessionId, 0);
+        this.lastGoodS.set(k.sessionId, pr.s);
+      } else {
+        const acc = (this.offMs.get(k.sessionId) ?? 0) + dtMs;
+        this.offMs.set(k.sessionId, acc);
+        const tooFar = Math.abs(pr.lateral) > this.track.width * CONFIG.respawnFarMul;
+        if (acc > CONFIG.respawnAfterMs || tooFar) {
+          this.respawn(k, this.lastGoodS.get(k.sessionId) ?? pr.s);
+          continue;
+        }
+      }
 
       // 랩: 뒤쪽 1/4 에서 앞쪽 1/4 로 넘어가면 한 바퀴
       const prev = this.prevS.get(k.sessionId) ?? pr.s;
@@ -219,6 +240,22 @@ export class RaceRoom extends Room<RoomState> {
     if (active.length === 0 || (firstDone && now - firstDone.finishMs > CONFIG.finishGraceMs)) {
       this.endRace();
     }
+  }
+
+  /** 코스로 되돌린다. 마지막으로 코스 위에 있던 지점의 중심선. */
+  private respawn(k: KartState, s: number) {
+    const p = offsetPoint(this.track, s, 0);
+    k.x = p.x; k.y = p.y;
+    k.heading = p.angle;
+    k.speed = Math.min(Math.abs(k.speed), CONFIG.respawnSpeed);
+    k.steer = 0;
+    k.drifting = false;
+    k.driftCharge = 0;
+    k.offTrack = false;
+    k.respawnMs = CONFIG.respawnBlinkMs;
+    this.offMs.set(k.sessionId, 0);
+    this.inputs.get(k.sessionId)!.drift = false;
+    this.broadcast("fx", { type: "respawn", id: k.sessionId, x: p.x, y: p.y });
   }
 
   private finishKart(k: KartState, now: number) {
@@ -252,7 +289,7 @@ export class RaceRoom extends Room<RoomState> {
     for (const p of this.state.pickups) {
       if (!p.active) continue;
       for (const k of karts) {
-        if (k.finished || k.stunMs > 0) continue;
+        if (k.finished || k.stunMs > 0 || k.respawnMs > 0) continue;
         if (Math.hypot(k.x - p.x, k.y - p.y) > CONFIG.pickupRadius) continue;
 
         p.active = false;
@@ -284,7 +321,7 @@ export class RaceRoom extends Room<RoomState> {
       if (!h) continue;
       const armed = (this.hazardArm.get(h.id) ?? 0) <= now;
       for (const k of karts) {
-        if (k.finished || k.stunMs > 0) continue;
+        if (k.finished || k.stunMs > 0 || k.respawnMs > 0) continue;
         if (!armed && k.sessionId === h.owner) continue;
         if (Math.hypot(k.x - h.x, k.y - h.y) > 58) continue;
 

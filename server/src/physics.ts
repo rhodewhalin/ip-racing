@@ -1,68 +1,88 @@
 // ============================================================
-// 카트 물리 — 순수 함수. Colyseus 의존성 없음.
+// 카트 물리 v2 — 순수 함수. Colyseus 의존성 없음.
 //
 // ⚠️ 이 파일은 client/src/physics.ts 와 **완전히 동일**해야 한다.
-//    클라이언트가 같은 물리로 자기 카트를 예측(prediction)해서 그리기 때문에,
-//    한쪽만 고치면 내 카트가 계속 미끄러지듯 보정되는 현상이 생긴다.
-//    고칠 일이 있으면 반드시 양쪽을 같이 고칠 것.
+//    클라이언트가 같은 물리로 자기 카트를 예측해서 그리기 때문이다.
+//
+// v1 대비 변경:
+//  ① 조향 램프 — 키를 눌러도 즉시 최대 조향이 걸리지 않는다. 약 0.15초에 걸쳐
+//     차오르고, 놓으면 더 빠르게 중앙으로 돌아온다. v1의 0/1 이진 조향이
+//     "조작이 어렵다"의 절반이었다.
+//  ② 선회 강화 — 최고속 620/선회 2.5 → 최소 회전반경 248이었는데 트랙 반폭이
+//     150이라 물리적으로 코너 통과가 불가능했다. 560/3.4 → 반경 165, 반폭 220.
+//  ③ 저속 선회 하한 상향 — 0.35 → 0.5. 감속했을 때 답답함이 줄어든다.
 // ============================================================
 
 export interface KartInput {
   throttle: number; // -1 후진 / 0 / 1 가속
-  steer: number;    // -1 좌 / 0 / 1 우
+  steer: number;    // -1 좌 / 0 / 1 우 (키보드는 이진, 램프는 아래에서)
   drift: boolean;
 }
 
 export interface KartBody {
   x: number;
   y: number;
-  heading: number;   // rad
-  speed: number;     // units/sec
-  driftCharge: number; // 드리프트 누적 시간(sec)
+  heading: number;
+  speed: number;
+  steerActual: number; // 램프가 적용된 실제 조향값
+  driftCharge: number;
   drifting: boolean;
 }
 
 export interface StepContext {
   offTrack: boolean;
-  speedMul: number; // 부스트/디버프 배수
+  speedMul: number;
   stunned: boolean;
 }
 
 export const KART = {
-  maxSpeed: 620,
-  accel: 560,
-  reverseSpeed: 220,
-  brake: 900,
+  maxSpeed: 560,
+  accel: 520,
+  reverseSpeed: 200,
+  brake: 880,
   drag: 240,
 
-  turnRate: 2.5,      // rad/sec (최고속 기준)
-  driftTurnMul: 1.7,  // 드리프트 중 조향 배수
-  driftGripLoss: 0.14, // 드리프트 중 감속 계수
-  driftMinSpeed: 220,
+  turnRate: 3.4,       // rad/sec → 최소 회전반경 560/3.4 ≈ 165
+  lowSpeedTurn: 0.5,   // 저속에서도 이 비율만큼은 돈다
+  steerRampUp: 7.0,    // 초당 조향 증가율 (1.0까지 약 0.14초)
+  steerRampDown: 12.0, // 키를 놓았을 때 중앙 복귀
 
-  driftChargeNeed: 1.1, // 부스트 발동에 필요한 드리프트 시간(sec)
-  driftBoostMul: 1.35,
-  driftBoostMs: 1200,
+  driftTurnMul: 1.55,
+  driftGripLoss: 0.11,
+  driftMinSpeed: 200,
 
-  offTrackMul: 0.55,
-  offTrackDrag: 700,
+  driftChargeNeed: 0.9,
+  driftBoostMul: 1.4,
+  driftBoostMs: 1300,
+
+  offTrackMul: 0.7,    // v1은 0.55. 리스폰이 있으니 즉발 페널티는 완화.
+  offTrackDrag: 500,
 
   radius: 42,
-  stunSpin: 7.5, // rad/sec
+  stunSpin: 7.5,
   stunDecel: 1400,
 } as const;
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
-/** 카트 한 스텝 적분. body를 직접 변형한다. */
+/** 조향 램프. 목표값으로 서서히 다가가고, 중앙 복귀는 더 빠르게. */
+function rampSteer(current: number, target: number, dt: number): number {
+  const towardCenter = Math.abs(target) < Math.abs(current) || target * current < 0;
+  const rate = towardCenter ? KART.steerRampDown : KART.steerRampUp;
+  const d = target - current;
+  const step = rate * dt;
+  if (Math.abs(d) <= step) return target;
+  return current + Math.sign(d) * step;
+}
+
 export function stepKart(b: KartBody, input: KartInput, dt: number, ctx: StepContext) {
-  // 스턴: 조작 불가 + 제자리 스핀. 물폭탄 맞은 상태.
   if (ctx.stunned) {
     b.speed -= KART.stunDecel * dt;
     if (b.speed < 0) b.speed = 0;
     b.heading += KART.stunSpin * dt;
     b.drifting = false;
     b.driftCharge = 0;
+    b.steerActual = 0;
     b.x += Math.cos(b.heading) * b.speed * dt;
     b.y += Math.sin(b.heading) * b.speed * dt;
     return;
@@ -73,42 +93,39 @@ export function stepKart(b: KartBody, input: KartInput, dt: number, ctx: StepCon
   if (input.throttle > 0) b.speed += KART.accel * dt;
   else if (input.throttle < 0) b.speed -= KART.brake * dt;
   else {
-    // 코스팅: 0으로 수렴
     const d = KART.drag * dt;
     b.speed = b.speed > 0 ? Math.max(0, b.speed - d) : Math.min(0, b.speed + d);
   }
 
-  // 잔디/모래에서는 초과 속도를 빠르게 깎는다 (부스트로 잠깐 가로지르는 건 가능)
   if (ctx.offTrack && b.speed > topSpeed) b.speed -= KART.offTrackDrag * dt;
-
   b.speed = clamp(b.speed, -KART.reverseSpeed, Math.max(topSpeed, 0));
 
-  // 드리프트 판정
+  // 조향 램프
+  b.steerActual = rampSteer(b.steerActual, clamp(input.steer, -1, 1), dt);
+
   const fast = Math.abs(b.speed) > KART.driftMinSpeed;
-  const turning = Math.abs(input.steer) > 0.1;
+  const turning = Math.abs(b.steerActual) > 0.15;
   b.drifting = input.drift && fast && turning;
 
-  // 조향: 저속에서는 잘 안 돈다. 후진 시 반대로.
   const speedFactor = clamp(Math.abs(b.speed) / KART.maxSpeed, 0, 1);
   const dir = b.speed >= 0 ? 1 : -1;
   const turn =
-    input.steer *
+    b.steerActual *
     KART.turnRate *
-    (0.35 + 0.65 * speedFactor) *
+    (KART.lowSpeedTurn + (1 - KART.lowSpeedTurn) * speedFactor) *
     (b.drifting ? KART.driftTurnMul : 1) *
     dir;
   b.heading += turn * dt;
 
   if (b.drifting) {
     b.driftCharge += dt;
-    b.speed *= 1 - KART.driftGripLoss * dt * 3; // 미끄러지는 대신 조금 느려진다
+    b.speed *= 1 - KART.driftGripLoss * dt * 3;
   }
 
   b.x += Math.cos(b.heading) * b.speed * dt;
   b.y += Math.sin(b.heading) * b.speed * dt;
 }
 
-/** 드리프트를 놓는 순간 부스트가 터지는가 */
 export function driftReleaseBoost(charge: number): boolean {
   return charge >= KART.driftChargeNeed;
 }

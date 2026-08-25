@@ -14,6 +14,7 @@ export class KartState extends Schema {
   @type("number") y = 0;
   @type("number") heading = 0;
   @type("number") speed = 0;
+  @type("number") steer = 0;      // 램프가 적용된 실제 조향값
   @type("boolean") drifting = false;
   @type("number") driftCharge = 0;
 
@@ -30,6 +31,7 @@ export class KartState extends Schema {
   @type("number") shieldMs = 0;
   @type("number") boostMs = 0;
   @type("number") speedMul = 1;
+  @type("number") respawnMs = 0;  // >0 이면 방금 복귀 (깜빡임/무적)
 
   @type("string") item = "";       // "", bomb, boost, oil, shield
   @type("boolean") quizActive = false;

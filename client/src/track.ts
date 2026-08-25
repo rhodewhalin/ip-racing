@@ -1,25 +1,47 @@
 // ============================================================
-// 트랙 지오메트리 — 중심선(폴리라인) 기반.
+// 트랙 지오메트리 v2
 //
-// 트랙은 "중심선 점들 + 폭"으로만 정의된다. 여기서 파생되는 것:
-//  · s       : 중심선을 따라 달린 거리 → 랩/순위 계산
-//  · lateral : 중심선에서 벗어난 거리 → |lateral| > width/2 면 잔디(감속)
+// v1의 문제: 제어점 20개를 직선으로 이어서 코너가 전부 "각진 꼭짓점"이었다.
+//   63° 꼭짓점에는 돌아나갈 곡선 길이가 0이라 물리적으로 통과가 불가능했다.
 //
-// 중심선 좌표(TRACK_POINTS)는 서버가 소유하고, 접속 시 클라이언트로 보낸다.
-// 클라이언트는 이 파일의 "함수"만 복사해 쓴다. 좌표를 양쪽에 두면 반드시 어긋난다.
+// v2: 제어점을 Catmull-Rom 스플라인으로 보간해 매끄러운 곡선으로 만들고,
+//   폭을 300 → 440 으로 넓혔다. 제어점은 "이 근처를 지나가라"는 힌트일 뿐이다.
 // ============================================================
 
 export interface TrackData {
-  points: number[][]; // [[x,y], ...] 닫힌 루프
+  points: number[][];
   width: number;
-  cum: number[];      // 각 점까지의 누적 거리
+  cum: number[];
   total: number;
 }
 
 export interface Projection {
-  s: number;        // 중심선을 따른 거리
-  lateral: number;  // 부호 있는 횡방향 거리
+  s: number;
+  lateral: number;
   offTrack: boolean;
+}
+
+/** Catmull-Rom 스플라인으로 제어점 사이를 채운다. 닫힌 루프 가정. */
+export function smoothLoop(control: number[][], perSeg = 10): number[][] {
+  const n = control.length;
+  const out: number[][] = [];
+  const at = (i: number) => control[((i % n) + n) % n];
+
+  for (let i = 0; i < n; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    for (let j = 0; j < perSeg; j++) {
+      const t = j / perSeg, t2 = t * t, t3 = t2 * t;
+      out.push([
+        0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t +
+          (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+          (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+        0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t +
+          (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+          (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
+      ]);
+    }
+  }
+  return out;
 }
 
 export function buildTrack(points: number[][], width: number): TrackData {
@@ -32,7 +54,6 @@ export function buildTrack(points: number[][], width: number): TrackData {
   return { points, width, cum, total: cum[points.length] };
 }
 
-/** 점 (x,y) 를 중심선에 투영. 세그먼트가 20개 남짓이라 전수 검사로 충분하다. */
 export function project(t: TrackData, x: number, y: number): Projection {
   let best = { s: 0, lateral: 0, d2: Infinity };
 
@@ -52,29 +73,25 @@ export function project(t: TrackData, x: number, y: number): Projection {
 
     if (d2 < best.d2) {
       const len = Math.sqrt(len2);
-      // 외적 부호로 좌/우 구분
       const cross = (vx * dy - vy * dx) / len;
       best = { s: t.cum[i] + len * u, lateral: cross, d2 };
     }
   }
 
-  return {
-    s: best.s,
-    lateral: best.lateral,
-    offTrack: Math.abs(best.lateral) > t.width / 2,
-  };
+  return { s: best.s, lateral: best.lateral, offTrack: Math.abs(best.lateral) > t.width / 2 };
 }
 
-/** 중심선 위 거리 s 에 해당하는 좌표와 진행 방향 */
 export function pointAt(t: TrackData, s: number): { x: number; y: number; angle: number } {
   const d = ((s % t.total) + t.total) % t.total;
-  let i = 0;
-  while (i < t.points.length - 1 && t.cum[i + 1] <= d) i++;
-
-  const a = t.points[i];
-  const b = t.points[(i + 1) % t.points.length];
-  const segLen = t.cum[i + 1] - t.cum[i] || 1;
-  const u = (d - t.cum[i]) / segLen;
+  let lo = 0, hi = t.points.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (t.cum[mid] <= d) lo = mid; else hi = mid - 1;
+  }
+  const a = t.points[lo];
+  const b = t.points[(lo + 1) % t.points.length];
+  const segLen = t.cum[lo + 1] - t.cum[lo] || 1;
+  const u = (d - t.cum[lo]) / segLen;
 
   return {
     x: a[0] + (b[0] - a[0]) * u,
@@ -83,7 +100,6 @@ export function pointAt(t: TrackData, s: number): { x: number; y: number; angle:
   };
 }
 
-/** 중심선에서 lateral 만큼 옆으로 밀어낸 좌표 */
 export function offsetPoint(t: TrackData, s: number, lateral: number) {
   const p = pointAt(t, s);
   return {
