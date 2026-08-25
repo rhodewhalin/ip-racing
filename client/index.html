@@ -3,13 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1280, initial-scale=1" />
-    <title>IP Racing — Stage 1</title>
+    <title>IP Racing — Stage 1.5</title>
     <style>
-      :root { --bg:#0e1424; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; }
+      :root { --bg:#0e1424; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --risk:#ffb020; }
       * { box-sizing: border-box; font-family: system-ui, "Apple SD Gothic Neo", sans-serif; }
       body { margin:0; background:var(--bg); color:var(--fg); }
       #app { width:1280px; margin:0 auto; position:relative; }
       #game { width:1280px; height:480px; background:#0a1020; }
+
+      /* 로비/결과만 전체 덮기 */
       .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(8,12,24,.82); }
       .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px 32px; width:520px; }
       h1 { margin:0 0 4px; font-size:26px; letter-spacing:1px; }
@@ -21,20 +23,47 @@
       .row { display:flex; gap:10px; }
       .row button { flex:1; }
       .hidden { display:none !important; }
-      #gates { display:flex; gap:12px; margin-top:14px; }
-      .gate { flex:1; text-align:center; padding:16px 8px; border:2px solid var(--line); border-radius:12px; background:#101a30; opacity:.45; transition:.12s; }
-      .gate .item { font-size:24px; }
-      .gate .concept { font-size:18px; font-weight:700; margin-top:6px; }
-      .gate .key { font-size:12px; color:#8ea3c8; margin-top:6px; }
+
+      /* ===== 퀴즈: 전체화면이 아니라 하단 패널 =====
+         레이스가 계속 보여야 퀴즈와 레이스가 서로를 죽이지 않는다. */
+      #quiz {
+        position:absolute; left:0; right:0; bottom:0;
+        background:linear-gradient(to top, rgba(8,12,24,.97), rgba(8,12,24,.80));
+        border-top:1px solid var(--line);
+        padding:14px 22px 16px;
+        transition:box-shadow .18s;
+      }
+      #quiz.ok { box-shadow:inset 0 3px 0 var(--good); }
+      #quiz.no { box-shadow:inset 0 3px 0 var(--bad); }
+      #qhead { display:flex; align-items:center; gap:14px; }
+      #qmeta { font-size:12px; color:#8ea3c8; margin:0; white-space:nowrap; }
+      #qtext { font-size:19px; font-weight:700; flex:1; }
+
+      /* 베팅 */
+      #betbox { display:flex; align-items:center; gap:8px; }
+      .bet { padding:7px 13px; border-radius:8px; font-size:13px; font-weight:700;
+             background:#25324c; color:#9fb0d0; border:2px solid transparent; cursor:pointer; transition:.12s; }
+      .bet.on { color:#04122b; }
+      #betSafe.on { background:var(--accent); border-color:var(--accent); }
+      #betRisk.on { background:var(--risk); border-color:var(--risk); }
+      #quiz.locked .bet { opacity:.4; pointer-events:none; }
+      #oppbet { font-size:12px; color:#8ea3c8; min-width:110px; }
+
+      #gates { display:flex; gap:12px; margin-top:10px; }
+      .gate { flex:1; text-align:center; padding:10px 8px; border:2px solid var(--line); border-radius:12px; background:#101a30; opacity:.45; transition:.12s; }
+      .gate .item { font-size:20px; }
+      .gate .concept { font-size:17px; font-weight:700; margin-top:4px; }
+      .gate .key { font-size:12px; color:#8ea3c8; margin-top:4px; }
       #quiz.choose .gate { opacity:1; cursor:pointer; }
       .gate.picked { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset; }
-      #timerbar { height:8px; background:#0f1830; border-radius:6px; margin-top:14px; overflow:hidden; }
+
+      #timerbar { height:8px; background:#0f1830; border-radius:6px; margin-top:10px; overflow:hidden; }
       #timerfill { height:100%; width:100%; background:var(--accent); transition:width .1s linear; }
-      #qtext { font-size:20px; font-weight:700; min-height:28px; }
-      .hint { color:#8ea3c8; font-size:12px; margin-top:10px; }
+      .hint { color:#8ea3c8; font-size:12px; margin:8px 0 0; }
+
       #review .q { border-bottom:1px solid var(--line); padding:12px 0; }
       #review .q.wrong { background:rgba(255,93,108,.08); }
-      #review .tag { font-size:11px; color:#8ea3c8; }
+      .tag { font-size:11px; color:#8ea3c8; }
       #reviewlist { max-height:300px; overflow:auto; margin:10px 0; }
       .score { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed var(--line); }
       .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:12px; }
@@ -50,7 +79,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 교육 레이싱 · Stage 1 (2인)</p>
+          <p class="sub">지식재산권 교육 레이싱 · Stage 1.5 (2인)</p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row">
             <button id="btnCreate">게임 만들기</button>
@@ -68,15 +97,20 @@
         </div>
       </div>
 
-      <!-- QUIZ -->
-      <div id="quiz" class="overlay hidden">
-        <div class="card">
-          <p class="tag" id="qmeta"></p>
+      <!-- QUIZ (하단 패널) -->
+      <div id="quiz" class="hidden">
+        <div id="qhead">
+          <p id="qmeta"></p>
           <div id="qtext"></div>
-          <div id="gates"></div>
-          <div id="timerbar"><div id="timerfill"></div></div>
-          <p class="hint">← ↓ → 로 게이트 선택 · [1] 또는 Space 로 아이템 사용</p>
+          <div id="betbox">
+            <span id="oppbet"></span>
+            <button id="betSafe" class="bet on">🛡 안전</button>
+            <button id="betRisk" class="bet">🔥 승부</button>
+          </div>
         </div>
+        <div id="gates"></div>
+        <div id="timerbar"><div id="timerfill"></div></div>
+        <p class="hint">읽는 동안 <b>안전/승부</b> 결정 (Space로 토글) · 선택은 ← ↓ → · 아이템은 [1]</p>
       </div>
 
       <!-- RESULT / REVIEW -->
