@@ -40,6 +40,16 @@ export class KartState extends Schema {
   @type("number") correctCount = 0;
   @type("number") answerCount = 0;
   @type("boolean") ready = false;
+  @type("boolean") isBot = false;
+
+  // 드리프트 다단 부스트 표시용
+  @type("number") driftTier = 0;   // 0=없음, 1~3단 (충전 중)
+  @type("number") boostTier = 0;   // 발동된 부스트 단계
+
+  // 랩타임
+  @type("number") lastLapMs = 0;
+  @type("number") bestLapMs = 0;
+  @type("number") lapStartMs = 0; // 레이스 시작 기준, 현재 랩이 시작된 시각
 }
 
 export class PickupState extends Schema {

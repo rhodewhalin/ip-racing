@@ -48,6 +48,25 @@ export const CONFIG = {
   respawnFarMul: 0.7,     // 중심선에서 308(=440×0.7)만큼 벗어나면 즉시 복귀
   respawnSpeed: 190,      // 복귀 직후 속도 (완전 정지는 답답하다)
   respawnBlinkMs: 900,    // 무적/깜빡임
+
+  // --- AI 봇 ---
+  // 혼자서도 테스트/플레이가 되도록. 사람이 부족하면 자동으로 채운다.
+  bots: {
+    enabled: true,
+    fillTo: 4,          // 이 인원이 되도록 봇을 채운다
+    addDelayMs: 900,    // 카운트다운 직전 투입
+    names: ["김특허", "이상표", "박디자인", "최저작"],
+    // 난이도: 예측거리·조향감도·코너감속·드리프트 사용률
+    levels: [
+      { label: "쉬움", lookahead: 560, gain: 1.1, cornerBrake: 0.55, driftSkill: 0.2, speedCap: 0.86 },
+      { label: "보통", lookahead: 460, gain: 1.6, cornerBrake: 0.75, driftSkill: 0.6, speedCap: 0.95 },
+      { label: "어려움", lookahead: 400, gain: 2.1, cornerBrake: 0.9, driftSkill: 0.9, speedCap: 1.0 },
+    ],
+    defaultLevel: 1,
+    quizAccuracy: 0.6,   // 봇의 퀴즈 정답률
+    quizDelayMs: [900, 2600], // 봇이 답하기까지 걸리는 시간 범위
+    itemUseDelayMs: [400, 1800],
+  },
 } as const;
 
 export type ItemId = "bomb" | "boost" | "oil" | "shield";

@@ -12,12 +12,13 @@
 import { Room, Client } from "colyseus";
 import { RoomState, KartState, PickupState, HazardState } from "./schema";
 import { CONFIG, ItemId, QuizKind } from "./gameConfig";
-import { KART, KartInput, stepKart, driftReleaseBoost } from "./physics";
+import { KART, KartInput, stepKart, driftTier, driftTierInfo } from "./physics";
 import {
   TRACK_POINTS, TRACK_WIDTH, buildTrack, project, offsetPoint, TrackData,
 } from "./track";
 import { grantItem } from "./items";
 import { QuestionDispenser } from "./dispenser";
+import { BotDriver } from "./bot";
 import { gateLabel, Question } from "./questions";
 
 interface Pending {
@@ -41,6 +42,10 @@ export class RaceRoom extends Room<RoomState> {
   private hazardArm = new Map<string, number>();
   private offMs = new Map<string, number>();      // 코스 이탈 지속 시간
   private lastGoodS = new Map<string, number>();  // 마지막으로 코스 위에 있던 지점
+  private bots = new Map<string, BotDriver>();
+  private lapStart = new Map<string, number>();
+  private botItemAt = new Map<string, number>();
+  private botSeq = 0;
   private raceStart = 0;
   private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
@@ -118,12 +123,15 @@ export class RaceRoom extends Room<RoomState> {
 
   private maybeStart() {
     const ks = [...this.state.karts.values()];
-    if (ks.length >= CONFIG.minClients && ks.every((k) => k.ready)) this.startCountdown();
+    // 봇이 켜져 있으면 혼자서도 시작할 수 있다. 테스트 속도가 완전히 달라진다.
+    const need = CONFIG.bots.enabled ? 1 : CONFIG.minClients;
+    if (ks.length >= need && ks.every((k) => k.ready)) this.startCountdown();
   }
 
   private startCountdown() {
     this.state.phase = "countdown";
     this.lock();
+    this.fillWithBots();
     this.state.countdown = Math.ceil(CONFIG.countdownMs / 1000);
     const iv = this.clock.setInterval(() => {
       this.state.countdown -= 1;
@@ -131,9 +139,66 @@ export class RaceRoom extends Room<RoomState> {
         iv.clear();
         this.state.phase = "racing";
         this.raceStart = Date.now();
+        for (const k of this.state.karts.values()) { this.lapStart.set(k.sessionId, this.raceStart); k.lapStartMs = 0; }
         this.broadcast("race_start");
       }
     }, 1000);
+  }
+
+  /** 빈 자리를 봇으로 채운다. */
+  private fillWithBots() {
+    if (!CONFIG.bots.enabled) return;
+    const cfg = CONFIG.bots;
+    while (this.state.karts.size < cfg.fillTo) {
+      const idx = this.state.karts.size;
+      const id = `bot-${++this.botSeq}`;
+      const k = new KartState();
+      k.sessionId = id;
+      k.nickname = cfg.names[(this.botSeq - 1) % cfg.names.length];
+      k.isBot = true;
+      k.ready = true;
+
+      const lat = [-96, -32, 32, 96][idx] ?? 0;
+      const sp = offsetPoint(this.track, 0, lat);
+      k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
+
+      this.state.karts.set(id, k);
+      this.inputs.set(id, { throttle: 0, steer: 0, drift: false });
+      this.prevS.set(id, 0);
+      this.wasDrifting.set(id, false);
+      this.offMs.set(id, 0);
+      this.lastGoodS.set(id, 0);
+
+      const level = cfg.levels[cfg.defaultLevel] ?? cfg.levels[1];
+      this.bots.set(id, new BotDriver(level as any, Math.random()));
+    }
+  }
+
+  /** 봇 입력 생성 + 아이템 자동 사용 */
+  private driveBots(dt: number, now: number) {
+    for (const [id, driver] of this.bots) {
+      const k = this.state.karts.get(id);
+      if (!k || k.finished) continue;
+
+      if (k.stunMs > 0 || k.respawnMs > 0) {
+        this.inputs.set(id, { throttle: 0, steer: 0, drift: false });
+        continue;
+      }
+      this.inputs.set(id, driver.think(this.track, k, dt));
+
+      // 아이템은 조금 뜸을 들였다가 쓴다 — 즉시 쓰면 기계 같다
+      if (k.item) {
+        let at = this.botItemAt.get(id);
+        if (at === undefined) {
+          const [lo, hi] = CONFIG.bots.itemUseDelayMs;
+          at = now + lo + Math.random() * (hi - lo);
+          this.botItemAt.set(id, at);
+        }
+        if (now >= at) { this.useItem(id); this.botItemAt.delete(id); }
+      } else {
+        this.botItemAt.delete(id);
+      }
+    }
   }
 
   private spawnPickups() {
@@ -160,6 +225,7 @@ export class RaceRoom extends Room<RoomState> {
     this.state.raceMs = now - this.raceStart;
 
     const karts = [...this.state.karts.values()];
+    this.driveBots(dt, now);
 
     for (const k of karts) {
       if (k.finished) continue;
@@ -182,12 +248,17 @@ export class RaceRoom extends Room<RoomState> {
         stunned: k.stunMs > 0,
       });
 
-      // 드리프트를 놓는 순간 부스트
+      // 드리프트를 놓는 순간, 충전 단계에 따라 부스트가 터진다
       const was = this.wasDrifting.get(k.sessionId) || false;
-      if (was && !body.drifting && driftReleaseBoost(k.driftCharge)) {
-        k.speedMul = KART.driftBoostMul;
-        k.boostMs = KART.driftBoostMs;
-        this.broadcast("fx", { type: "drift_boost", id: k.sessionId });
+      if (was && !body.drifting) {
+        const tier = driftTier(k.driftCharge);
+        const info = driftTierInfo(tier);
+        if (info) {
+          k.speedMul = info.mul;
+          k.boostMs = info.ms;
+          k.boostTier = tier;
+          this.broadcast("fx", { type: "drift_boost", id: k.sessionId, tier });
+        }
       }
       this.wasDrifting.set(k.sessionId, body.drifting);
 
@@ -196,6 +267,8 @@ export class RaceRoom extends Room<RoomState> {
       k.steer = body.steerActual;
       k.drifting = body.drifting;
       k.driftCharge = body.drifting ? body.driftCharge : 0;
+      k.driftTier = body.drifting ? driftTier(k.driftCharge) : 0;
+      if (k.boostMs <= 0) k.boostTier = 0;
 
       // 코스 판정 + 리스폰
       const pr = project(this.track, k.x, k.y);
@@ -219,7 +292,12 @@ export class RaceRoom extends Room<RoomState> {
       const prev = this.prevS.get(k.sessionId) ?? pr.s;
       if (prev > this.track.total * 0.75 && pr.s < this.track.total * 0.25) {
         k.lap += 1;
-        this.broadcast("fx", { type: "lap", id: k.sessionId, lap: k.lap });
+        const started = this.lapStart.get(k.sessionId) ?? this.raceStart;
+        k.lastLapMs = now - started;
+        if (k.bestLapMs === 0 || k.lastLapMs < k.bestLapMs) k.bestLapMs = k.lastLapMs;
+        this.lapStart.set(k.sessionId, now);
+        k.lapStartMs = now - this.raceStart;
+        this.broadcast("fx", { type: "lap", id: k.sessionId, lap: k.lap, lapMs: k.lastLapMs });
         if (k.lap >= CONFIG.laps) this.finishKart(k, now);
       } else if (prev < this.track.total * 0.25 && pr.s > this.track.total * 0.75) {
         k.lap = Math.max(0, k.lap - 1); // 역주행 보정
@@ -419,6 +497,21 @@ export class RaceRoom extends Room<RoomState> {
       q, kind, correctLabel: gateLabel(q.correctIndex), timer,
     });
 
+    // 봇은 메시지를 못 받으니 내부에서 스스로 답한다
+    if (k.isBot) {
+      const [lo, hi] = CONFIG.bots.quizDelayMs;
+      const delay = Math.min(lo + Math.random() * (hi - lo), CONFIG.quizMs - 200);
+      this.clock.setTimeout(() => {
+        const right = Math.random() < CONFIG.bots.quizAccuracy;
+        const wrongLabels = ["A", "B", "C"].filter((l) => l !== gateLabel(q.correctIndex));
+        this.resolveQuiz(
+          k.sessionId,
+          right ? gateLabel(q.correctIndex) : wrongLabels[Math.floor(Math.random() * wrongLabels.length)]
+        );
+      }, delay);
+      return;
+    }
+
     // 정답은 보내지 않는다
     const client = this.clients.find((c) => c.sessionId === k.sessionId);
     client?.send("quiz_open", {
@@ -476,6 +569,7 @@ export class RaceRoom extends Room<RoomState> {
       }
     }
 
+    if (k.isBot) return;
     const client = this.clients.find((c) => c.sessionId === sessionId);
     client?.send("quiz_result", {
       correct,
@@ -510,6 +604,8 @@ export class RaceRoom extends Room<RoomState> {
         timeMs: k.finished ? k.finishMs - this.raceStart : 0,
         raceScore,
         ipScore,
+        isBot: k.isBot,
+        bestLapMs: k.bestLapMs,
         correctCount: k.correctCount,
         answerCount: k.answerCount,
         finalScore: Math.round(raceScore * 0.5 + ipScore * 0.5),

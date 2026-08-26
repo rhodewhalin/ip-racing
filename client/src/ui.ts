@@ -60,7 +60,7 @@ export const ui = {
 
     $("btnReady").addEventListener("click", () => {
       net.ready();
-      this.lobbyMsg("준비 완료. 다른 참가자를 기다립니다… (2~4인)");
+      this.lobbyMsg("준비 완료. 혼자여도 AI가 자리를 채웁니다.");
     });
 
     this._onStart = onStart;
@@ -97,16 +97,37 @@ export const ui = {
   // ---------- HUD ----------
   renderHud(s: any) {
     this.show("hud");
+    this.show("standings");
     const me = net.me();
     if (!me) return;
+
     $("hudRank").textContent = `${me.rank} / ${s.karts.size}`;
     $("hudLap").textContent = `${Math.min(me.lap + 1, s.laps)} / ${s.laps}`;
     $("hudItem").textContent = ITEM_LABEL[me.item] ?? "—";
     $("hudSpeed").textContent = String(Math.round(Math.abs(me.speed)));
     $("hudItem").classList.toggle("ready", !!me.item);
 
-    const warn = me.offTrack && Math.abs(me.speed) > 60;
-    $("hud").classList.toggle("offtrack", warn);
+    // 랩타임: 현재 랩 경과 + 베스트
+    const cur = Math.max(0, (s.raceMs ?? 0) - (me.lapStartMs ?? 0));
+    $("hudLapTime").textContent = fmt(cur);
+    $("hudBest").textContent = me.bestLapMs > 0 ? fmt(me.bestLapMs) : "—";
+
+    // 드리프트 단계 — 몇 단인지 보여야 물고 놓는 판단이 된다
+    const tier = me.driftTier || me.boostTier || 0;
+    const el = $("hudDrift");
+    el.textContent = tier > 0 ? `${tier}단` : "—";
+    el.className = "v" + (tier > 0 ? ` t${tier}` : "");
+
+    $("hud").classList.toggle("offtrack", me.offTrack && Math.abs(me.speed) > 60);
+
+    // 순위표
+    const list = ([...s.karts.values()] as any[]).sort((a, b) => a.rank - b.rank);
+    $("standings").innerHTML = list.map((k) => {
+      const cls = k.sessionId === net.selfId ? "me" : k.isBot ? "bot" : "";
+      const tag = k.isBot ? " 🤖" : "";
+      const lap = k.finished ? "🏁" : `${Math.min(k.lap + 1, s.laps)}랩`;
+      return `<div class="srow ${cls}"><span>${k.rank}. ${k.nickname}${tag}</span><span>${lap}</span></div>`;
+    }).join("");
   },
 
   // ---------- 퀴즈 (레이스를 멈추지 않는다) ----------
@@ -171,13 +192,16 @@ export const ui = {
   renderResult(data: any) {
     this.hide("quiz");
     this.hide("hud");
+    this.hide("standings");
     this.show("result");
 
     $("scores").innerHTML = data.results
       .map((r: any) => {
         const time = r.finished ? `${(r.timeMs / 1000).toFixed(1)}초` : "미완주";
-        return `<div class="score"><span>${r.rank}위 · <b>${r.nickname}</b></span>` +
-          `<span>${time} · IP ${r.correctCount}/${r.answerCount} · <b>${r.finalScore}</b></span></div>`;
+        const best = r.bestLapMs > 0 ? ` · 베스트랩 ${(r.bestLapMs / 1000).toFixed(1)}초` : "";
+        const bot = r.isBot ? " 🤖" : "";
+        return `<div class="score"><span>${r.rank}위 · <b>${r.nickname}</b>${bot}</span>` +
+          `<span>${time}${best} · IP ${r.correctCount}/${r.answerCount} · <b>${r.finalScore}</b></span></div>`;
       })
       .join("");
 
@@ -200,3 +224,8 @@ export const ui = {
       .join("");
   },
 };
+
+/** ms → 초.소수1자리 */
+function fmt(ms: number) {
+  return (ms / 1000).toFixed(1);
+}

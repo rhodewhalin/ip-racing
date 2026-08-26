@@ -30,6 +30,14 @@
       #hud .k { font-size:11px; color:#8ea3c8; letter-spacing:1px; }
       #hud .v { font-size:26px; font-weight:800; }
       #hudItem.ready { color:var(--warn); }
+      #hudDrift.t1 { color:#66c2ff; } #hudDrift.t2 { color:#ff8a3d; } #hudDrift.t3 { color:#ff4d6d; }
+      #hud .v { font-size:22px; }
+      #standings { position:absolute; left:20px; top:120px; pointer-events:none;
+                   background:rgba(10,16,32,.72); border:1px solid var(--line);
+                   border-radius:10px; padding:8px 12px; font-size:13px; min-width:190px; }
+      #standings .srow { display:flex; justify-content:space-between; gap:12px; padding:2px 0; }
+      #standings .me { color:var(--accent); font-weight:800; }
+      #standings .bot { color:#8ea3c8; }
       #hud.offtrack::after { content:"코스 이탈"; position:absolute; right:22px; top:18px;
              color:var(--warn); font-weight:800; font-size:18px; }
 
@@ -77,7 +85,12 @@
         <div class="cell"><span class="k">LAP</span><span class="v" id="hudLap">-</span></div>
         <div class="cell"><span class="k">ITEM (Space)</span><span class="v" id="hudItem">—</span></div>
         <div class="cell"><span class="k">SPEED</span><span class="v" id="hudSpeed">0</span></div>
+        <div class="cell"><span class="k">LAP TIME</span><span class="v" id="hudLapTime">0.0</span></div>
+        <div class="cell"><span class="k">BEST</span><span class="v" id="hudBest">—</span></div>
+        <div class="cell"><span class="k">DRIFT</span><span class="v" id="hudDrift">—</span></div>
       </div>
+
+      <div id="standings" class="hidden"></div>
 
       <div id="countdown" class="hidden"><div id="countnum"></div></div>
 
@@ -93,7 +106,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 카트 레이싱 · 2~4인 · 3바퀴</p>
+          <p class="sub">지식재산권 카트 레이싱 · 2~4인 · 3바퀴 · 인원이 모자라면 AI가 채웁니다</p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>

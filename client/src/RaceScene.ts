@@ -14,7 +14,7 @@
 
 import Phaser from "phaser";
 import { net, InputState } from "./net";
-import { KartBody, stepKart } from "./physics";
+import { KartBody, stepKart, KART } from "./physics";
 import { buildTrack, project, TrackData } from "./track";
 
 const COLORS = [0x4da3ff, 0xff9f43, 0x37d67a, 0xc77dff];
@@ -44,6 +44,11 @@ export class RaceScene extends Phaser.Scene {
   private camY = 0;
   private zoom = 0.58;
 
+  // 미니맵: world 컨테이너에 넣지 않는다. 화면에 고정되어야 하고 회전해서도 안 된다.
+  private mapG!: Phaser.GameObjects.Graphics;
+  private mapBox = { x: 1020, y: 20, w: 240, h: 160 };
+  private mapT = { sx: 1, sy: 1, ox: 0, oy: 0 };
+
   constructor() { super("race"); }
 
   create() {
@@ -52,6 +57,9 @@ export class RaceScene extends Phaser.Scene {
     this.world = this.add.container(0, 0);
     this.trackG = this.add.graphics();
     this.world.add(this.trackG);
+
+    // 미니맵은 씬에 직접 붙인다 (world 컨테이너 밖 = 회전/이동 영향 없음)
+    this.mapG = this.add.graphics().setDepth(200);
 
     const kb = this.input.keyboard!;
     this.keys = {
@@ -86,6 +94,22 @@ export class RaceScene extends Phaser.Scene {
     this.strokeLoop(pts);
     this.trackG.lineStyle(4, 0x46608f, 0.55);
     this.strokeLoop(pts);
+
+    // 미니맵 좌표 변환 계산
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
+    const pad = 14;
+    const sx = (this.mapBox.w - pad * 2) / (maxX - minX);
+    const sy = (this.mapBox.h - pad * 2) / (maxY - minY);
+    const sc = Math.min(sx, sy);
+    this.mapT = {
+      sx: sc, sy: sc,
+      ox: this.mapBox.x + pad - minX * sc,
+      oy: this.mapBox.y + pad - minY * sc,
+    };
 
     // 출발선
     const a = pts[0], b = pts[1];
@@ -154,6 +178,7 @@ export class RaceScene extends Phaser.Scene {
     this.updateCamera(me, dt);
     this.renderKarts(state, dt);
     this.renderProps(state, dt);
+    this.renderMinimap(state);
   }
 
   private syncLocal(me: any) {
@@ -224,8 +249,14 @@ export class RaceScene extends Phaser.Scene {
       label.setText(k.nickname + (k.quizActive ? " ❓" : ""));
       label.setRotation(-ph - this.camRot);
 
-      if ((k.drifting && k.driftCharge > 0.45) || k.boostMs > 0) {
-        this.spark(px, py, ph, k.boostMs > 0 ? 0xffd166 : 0x9fb4d8);
+      // 드리프트 스파크는 충전 단계에 따라 색이 바뀐다.
+      // "지금 몇 단인지"가 눈으로 보여야 물고 놓는 판단이 가능하다.
+      if (k.drifting) {
+        const info = KART.driftTiers[k.driftTier - 1];
+        this.spark(px, py, ph, info ? info.color : 0x9fb4d8);
+      } else if (k.boostMs > 0) {
+        const info = KART.driftTiers[k.boostTier - 1];
+        this.spark(px, py, ph, info ? info.color : 0xffd166);
       }
       if (k.offTrack && Math.abs(k.speed) > 60) this.spark(px, py, ph, 0x4a6b3a);
     });
@@ -251,6 +282,42 @@ export class RaceScene extends Phaser.Scene {
     for (const id of Object.keys(this.hazardG)) {
       if (!live.has(id)) { this.hazardG[id].destroy(); delete this.hazardG[id]; }
     }
+  }
+
+  /** 미니맵 — 카메라가 회전하니 남들 위치를 알 방법이 이것뿐이다. */
+  private renderMinimap(state: any) {
+    if (!this.track) return;
+    const g = this.mapG;
+    const T = this.mapT;
+    const mx = (x: number) => x * T.sx + T.ox;
+    const my = (y: number) => y * T.sy + T.oy;
+
+    g.clear();
+    g.fillStyle(0x0a1020, 0.72);
+    g.fillRoundedRect(this.mapBox.x, this.mapBox.y, this.mapBox.w, this.mapBox.h, 10);
+    g.lineStyle(1, 0x2b3a57, 1);
+    g.strokeRoundedRect(this.mapBox.x, this.mapBox.y, this.mapBox.w, this.mapBox.h, 10);
+
+    const pts = this.track.points;
+    g.lineStyle(5, 0x33456b, 1);
+    g.beginPath();
+    g.moveTo(mx(pts[0][0]), my(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) g.lineTo(mx(pts[i][0]), my(pts[i][1]));
+    g.closePath();
+    g.strokePath();
+
+    const karts: any[] = [...state.karts.values()];
+    karts.forEach((k, i) => {
+      const isSelf = k.sessionId === net.selfId;
+      const x = isSelf ? this.local.x : k.x;
+      const y = isSelf ? this.local.y : k.y;
+      g.fillStyle(COLORS[i % COLORS.length], 1);
+      g.fillCircle(mx(x), my(y), isSelf ? 6 : 4.5);
+      if (isSelf) {
+        g.lineStyle(2, 0xffffff, 0.9);
+        g.strokeCircle(mx(x), my(y), 8);
+      }
+    });
   }
 
   // ---------- 오브젝트 ----------
