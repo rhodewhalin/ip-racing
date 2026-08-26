@@ -46,6 +46,7 @@ export class RaceRoom extends Room<RoomState> {
   private lapStart = new Map<string, number>();
   private botItemAt = new Map<string, number>();
   private botSeq = 0;
+  private stuckMs = new Map<string, number>();
   private raceStart = 0;
   private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
@@ -102,6 +103,7 @@ export class RaceRoom extends Room<RoomState> {
     this.wasDrifting.set(client.sessionId, false);
     this.offMs.set(client.sessionId, 0);
     this.lastGoodS.set(client.sessionId, 0);
+    this.stuckMs.set(client.sessionId, 0);
 
     // 트랙 지오메트리는 상태가 아니라 1회성 데이터 — 접속 시 한 번만 보낸다
     client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
@@ -115,6 +117,7 @@ export class RaceRoom extends Room<RoomState> {
     this.wasDrifting.delete(id);
     this.offMs.delete(id);
     this.lastGoodS.delete(id);
+    this.stuckMs.delete(id);
     const p = this.pending.get(id);
     if (p) { p.timer?.clear?.(); this.pending.delete(id); }
   }
@@ -168,6 +171,7 @@ export class RaceRoom extends Room<RoomState> {
       this.wasDrifting.set(id, false);
       this.offMs.set(id, 0);
       this.lastGoodS.set(id, 0);
+      this.stuckMs.set(id, 0);
 
       const level = cfg.levels[cfg.defaultLevel] ?? cfg.levels[1];
       this.bots.set(id, new BotDriver(level as any, Math.random()));
@@ -242,9 +246,11 @@ export class RaceRoom extends Room<RoomState> {
         steerActual: k.steer, driftCharge: k.driftCharge, drifting: k.drifting,
       };
 
-      // 조향 보조를 위해 현재 위치의 코스 방향을 넘긴다
+      // 조향 보조를 위해 현재 위치의 코스 방향을 넘긴다.
+      // ⚠️ 앞을 내다보게 하면(s + 120) 보조가 코너까지 대신 돌아줘서
+      //    조향을 전혀 안 해도 완주가 된다. 현재 지점의 방향만 쓴다.
       const here = project(this.track, k.x, k.y);
-      const guide = pointAt(this.track, here.s + 120);
+      const guide = pointAt(this.track, here.s);
 
       stepKart(body, input, dt, {
         offTrack: k.offTrack,
@@ -275,22 +281,60 @@ export class RaceRoom extends Room<RoomState> {
       k.driftTier = body.drifting ? driftTier(k.driftCharge) : 0;
       if (k.boostMs <= 0) k.boostTier = 0;
 
-      // 코스 판정 + 리스폰
-      const pr = project(this.track, k.x, k.y);
-      k.offTrack = pr.offTrack;
+      // 코스 판정
+      let pr = project(this.track, k.x, k.y);
       k.respawnMs = Math.max(0, k.respawnMs - dtMs);
 
-      if (!pr.offTrack) {
-        this.offMs.set(k.sessionId, 0);
+      // --- 벽: 밖으로 못 나가되, 벽을 따라 미끄러진다 ---
+      if (CONFIG.wall.enabled) {
+        const limit = this.track.width / 2 - KART.radius - CONFIG.wall.margin;
+        if (Math.abs(pr.lateral) > limit) {
+          const side = pr.lateral >= 0 ? 1 : -1;
+          const p = offsetPoint(this.track, pr.s, side * limit);
+          k.x = p.x; k.y = p.y;
+
+          // 진행 방향을 코스 방향으로 끌어당긴다 = 벽을 긁으며 앞으로 나아감.
+          // 이게 없으면 벽에 코를 박고 그대로 멈춘다.
+          let d = p.angle - k.heading;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          // 후진 중이면 반대 방향으로 정렬
+          if (k.speed < 0) d = d > 0 ? d - Math.PI : d + Math.PI;
+          k.heading += Math.max(-1, Math.min(1, d)) * CONFIG.wall.slideAlign;
+
+          if (Math.abs(k.speed) > CONFIG.wall.minSlideSpeed) k.speed *= CONFIG.wall.speedKeep;
+          this.broadcast("fx", { type: "wall", id: k.sessionId, x: k.x, y: k.y });
+          pr = project(this.track, k.x, k.y);
+        }
+        k.offTrack = false;
         this.lastGoodS.set(k.sessionId, pr.s);
       } else {
-        const acc = (this.offMs.get(k.sessionId) ?? 0) + dtMs;
-        this.offMs.set(k.sessionId, acc);
-        const tooFar = Math.abs(pr.lateral) > this.track.width * CONFIG.respawnFarMul;
-        if (acc > CONFIG.respawnAfterMs || tooFar) {
-          this.respawn(k, this.lastGoodS.get(k.sessionId) ?? pr.s);
+        k.offTrack = pr.offTrack;
+        if (!pr.offTrack) {
+          this.offMs.set(k.sessionId, 0);
+          this.lastGoodS.set(k.sessionId, pr.s);
+        } else {
+          const acc = (this.offMs.get(k.sessionId) ?? 0) + dtMs;
+          this.offMs.set(k.sessionId, acc);
+          const tooFar = Math.abs(pr.lateral) > this.track.width * CONFIG.respawnFarMul;
+          if (acc > CONFIG.respawnAfterMs || tooFar) {
+            this.respawn(k, this.lastGoodS.get(k.sessionId) ?? pr.s);
+            continue;
+          }
+        }
+      }
+
+      // --- 끼임 감지: 최후의 안전장치 ---
+      if (k.stunMs <= 0 && k.respawnMs <= 0 && Math.abs(k.speed) < CONFIG.stuckSpeed) {
+        const acc = (this.stuckMs.get(k.sessionId) ?? 0) + dtMs;
+        this.stuckMs.set(k.sessionId, acc);
+        if (acc > CONFIG.stuckMs) {
+          this.stuckMs.set(k.sessionId, 0);
+          this.respawn(k, pr.s + 60);
           continue;
         }
+      } else {
+        this.stuckMs.set(k.sessionId, 0);
       }
 
       // 랩: 뒤쪽 1/4 에서 앞쪽 1/4 로 넘어가면 한 바퀴

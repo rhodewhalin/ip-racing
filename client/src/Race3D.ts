@@ -141,6 +141,7 @@ export class Race3D {
     this.scene.add(this.ribbon(pts, halfW, halfW + 20, 3, 0xd94f5c));       // 오른쪽 커브
     this.scene.add(this.ribbon(pts, -6, 6, 1, 0x546d9e));                   // 중앙선
 
+    this.buildWalls(pts, halfW);
     this.buildStartLine(pts, halfW);
     this.buildPosts(halfW);
   }
@@ -170,6 +171,36 @@ export class Race3D {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
+  }
+
+  /** 좌우 벽. 이제 코스 밖으로 나갈 수 없고, 닿으면 긁으며 미끄러진다. */
+  private buildWalls(pts: number[][], halfW: number) {
+    const n = pts.length;
+    for (const side of [-1, 1]) {
+      const pos: number[] = [];
+      const idx: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % n];
+        const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        const nx = -Math.sin(ang) * halfW * side;
+        const ny = Math.cos(ang) * halfW * side;
+        pos.push(a[0] + nx, 0, a[1] + ny);
+        pos.push(a[0] + nx, 74, a[1] + ny);
+      }
+      for (let i = 0; i < n; i++) {
+        const i0 = i * 2, i1 = i * 2 + 1;
+        const j0 = ((i + 1) % n) * 2, j1 = ((i + 1) % n) * 2 + 1;
+        idx.push(i0, i1, j1, i0, j1, j0);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+        color: 0xe6ebf5, side: THREE.DoubleSide,
+      })));
+    }
   }
 
   private buildStartLine(pts: number[][], halfW: number) {
@@ -325,7 +356,7 @@ export class Race3D {
       if (!this.localReady) { this.syncLocal(me); this.localReady = true; }
       if (racing && !me.finished) {
         const pr = project(this.track, this.local.x, this.local.y);
-        const guide = pointAt(this.track, pr.s + 120);
+        const guide = pointAt(this.track, pr.s); // 서버와 동일해야 예측이 어긋나지 않는다
         stepKart(this.local, this.ctrl, dt, {
           offTrack: pr.offTrack,
           speedMul: me.speedMul,
@@ -493,6 +524,8 @@ export class Race3D {
       }
     } else if (d.type === "respawn" && isMe) {
       this.localReady = false;
+    } else if (d.type === "wall" && isMe) {
+      for (let i = 0; i < 3; i++) this.emitSpark(d.x, d.y, this.local.heading, 0xffd9a0);
     }
   }
 }
