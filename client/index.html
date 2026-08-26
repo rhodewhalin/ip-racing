@@ -46,6 +46,10 @@
       #btnMute { position:absolute; right:24px; bottom:24px; background:rgba(10,16,32,.8);
                  color:var(--fg); border:1px solid var(--line); padding:8px 12px;
                  font-size:18px; border-radius:10px; }
+      #spinbanner { position:absolute; left:50%; top:22%; transform:translateX(-50%);
+                    background:rgba(255,93,108,.92); color:#fff; font-weight:800;
+                    padding:10px 20px; border-radius:12px; font-size:clamp(14px,1.5vw,20px);
+                    pointer-events:none; box-shadow:0 6px 24px rgba(0,0,0,.5); }
       #minimap { position:absolute; right:24px; top:24px; background:rgba(10,16,32,.72);
                  border:1px solid var(--line); border-radius:10px; pointer-events:none; }
       #game { width:100%; height:100%; overflow:hidden; }
@@ -107,6 +111,8 @@
       <button id="btnFull" title="전체화면 (F)">⛶</button>
       <canvas id="minimap" width="240" height="160" class="hidden"></canvas>
 
+      <div id="spinbanner" class="hidden"><span id="spintext"></span></div>
+
       <div id="countdown" class="hidden"><div id="countnum"></div></div>
 
       <!-- 퀴즈 -->
@@ -121,7 +127,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v9 · 46문항 · 새 에셋 · 전체화면</span></p>
+          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v10 · 스핀아웃 수정 · 벽 글자 수정</span></p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>

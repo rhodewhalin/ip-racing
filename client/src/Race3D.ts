@@ -52,6 +52,7 @@ export class Race3D {
   private sparkIdx = 0;
   private running = false;
   private wallSfx = 0;
+  private frameErrors = 0;
 
   constructor(private container: HTMLElement) {}
 
@@ -65,7 +66,15 @@ export class Race3D {
     net.on("rematch", () => { this.localReady = false; this.ghost = {}; });
     if (net.track) this.buildWorld();
     else net.on("track", () => this.buildWorld());
-    this.renderer.setAnimationLoop(() => this.frame());
+    // 렌더 루프에서 예외가 한 번 터지면 이후 화면이 통째로 멈춘 것처럼 보인다.
+    // 감싸두면 한 프레임만 건너뛰고 계속 돈다. 콘솔에 원인이 남는다.
+    this.renderer.setAnimationLoop(() => {
+      try { this.frame(); }
+      catch (e) {
+        this.frameErrors++;
+        if (this.frameErrors <= 5) console.error("[Race3D] frame error", e);
+      }
+    });
   }
 
   // ---------- 초기화 ----------
@@ -206,8 +215,12 @@ export class Race3D {
         const ny = Math.cos(ang) * halfW * side;
         pos.push(a[0] + nx, 0, a[1] + ny);
         pos.push(a[0] + nx, 96, a[1] + ny);
-        const u = i / n;
-        uvs.push(u, 1, u, 0);
+        // v: 아래 정점 = 0, 위 정점 = 1.
+        // (반대로 넣으면 글자가 위아래로 뒤집힌다 — 실제로 그랬다)
+        // u: 좌우 벽은 안쪽에서 볼 때 서로 반대 면을 보므로 한쪽만 뒤집어야
+        //    글자가 거울상으로 보이지 않는다.
+        const u = side > 0 ? i / n : 1 - i / n;
+        uvs.push(u, 0, u, 1);
       }
       for (let i = 0; i < n; i++) {
         const i0 = i * 2, i1 = i * 2 + 1;
@@ -646,6 +659,10 @@ export class Race3D {
       audio.shield();
     } else if (d.type === "finish" && isMe) {
       audio.finish();
+    } else if (d.type === "recover" && isMe) {
+      // 스핀에서 빠져나오는 순간. 예측 좌표를 서버와 다시 맞춘다.
+      this.localReady = false;
+      audio.shield();
     }
   }
 }

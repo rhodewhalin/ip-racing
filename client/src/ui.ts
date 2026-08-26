@@ -150,6 +150,15 @@ export const ui = {
 
     $("hud").classList.toggle("offtrack", me.offTrack && Math.abs(me.speed) > 60);
 
+    // 피격 배너 — 스핀을 "게임이 멈춘 것"으로 오해하지 않도록 명확히 알린다
+    const spinning = me.stunMs > 0;
+    $("spinbanner").classList.toggle("hidden", !spinning);
+    if (spinning) {
+      $("spintext").textContent = me.quizActive
+        ? `💧 스핀아웃! 문제를 맞히면 즉시 탈출 (${(me.stunMs / 1000).toFixed(1)}초)`
+        : `💧 스핀아웃 — ${(me.stunMs / 1000).toFixed(1)}초`;
+    }
+
     // 순위표
     const list = ([...s.karts.values()] as any[]).sort((a, b) => a.rank - b.rank);
     $("standings").innerHTML = list.map((k) => {
