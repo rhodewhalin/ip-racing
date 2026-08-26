@@ -73,9 +73,36 @@ export const ui = {
       const key = (ev as KeyboardEvent).key;
       if (key === "m" || key === "M") this.toggleSound();
       if (key === "f" || key === "F") this.toggleFullscreen();
+      if (key === "d" || key === "D") this.toggleDiag();
     });
 
     this._onStart = onStart;
+  },
+
+  /** 진단 오버레이 (D 키). 멈춤이 발생하면 이 화면을 캡처해 주세요. */
+  _diagOn: false,
+  _diagTimer: 0 as any,
+
+  toggleDiag() {
+    this._diagOn = !this._diagOn;
+    $("diag").classList.toggle("hidden", !this._diagOn);
+    clearInterval(this._diagTimer);
+    if (this._diagOn) {
+      this._diagTimer = setInterval(() => {
+        const d = (window as any).__ipr;
+        if (!d) { $("diag").textContent = "진단 정보 없음 (레이스 시작 전)"; return; }
+        $("diag").innerHTML =
+          `<b>진단</b> (D로 끄기)<br>` +
+          `phase: ${d.phase}<br>` +
+          `내 속도(예측): ${d.speed} / 서버: ${d.serverSpeed}<br>` +
+          `예측-서버 오차: ${d.gap}<br>` +
+          `스핀: ${d.stunMs}ms · 복귀: ${d.respawnMs}ms · 퀴즈: ${d.quizActive}<br>` +
+          `입력: ↑${d.keys.throttle} ←→${d.keys.steer} drift=${d.keys.drift}<br>` +
+          `<span style="color:${d.stallMs > 800 ? "#ff5d6c" : "#8ea3c8"}">멈춤 지속: ${d.stallMs}ms</span><br>` +
+          `서버 갱신 경과: ${d.serverAgeMs}ms<br>` +
+          `프레임 오류: ${d.frameErrors}${d.lastError ? ` — ${d.lastError}` : ""}`;
+      }, 250);
+    }
   },
 
   toggleFullscreen() {

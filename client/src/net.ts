@@ -22,6 +22,7 @@ export const net = {
   _handlers: {} as Record<string, ((p: any) => void)[]>,
   _bound: {} as Record<string, boolean>,
   _lastSent: { throttle: 0, steer: 0, drift: false } as InputState,
+  lastStateAt: 0,
 
   async create(nickname: string) {
     this.room = await this.client.create("race", { nickname });
@@ -87,7 +88,7 @@ export const net = {
     if (!this.room) return;
     this.selfId = this.room.sessionId;
     this._bound = {};
-    this.room.onStateChange((s: any) => { this.state = s; });
+    this.room.onStateChange((s: any) => { this.state = s; this.lastStateAt = performance.now(); });
     // 트랙 지오메트리는 접속 시 한 번만 온다
     this.on("track", (t: any) => { this.track = t; });
   },

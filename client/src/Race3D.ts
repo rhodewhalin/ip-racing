@@ -53,6 +53,10 @@ export class Race3D {
   private running = false;
   private wallSfx = 0;
   private frameErrors = 0;
+  private lastError = "";
+  private lastServerAt = 0;
+  private stallMs = 0;
+  private lastLocal = { x: 0, y: 0 };
 
   constructor(private container: HTMLElement) {}
 
@@ -68,12 +72,16 @@ export class Race3D {
     else net.on("track", () => this.buildWorld());
     // 렌더 루프에서 예외가 한 번 터지면 이후 화면이 통째로 멈춘 것처럼 보인다.
     // 감싸두면 한 프레임만 건너뛰고 계속 돈다. 콘솔에 원인이 남는다.
+    // 갱신에서 예외가 나도 **렌더는 반드시 실행한다.**
+    // 이전 버전은 예외가 나면 render() 까지 건너뛰어 화면이 그대로 멈췄다.
     this.renderer.setAnimationLoop(() => {
       try { this.frame(); }
-      catch (e) {
+      catch (e: any) {
         this.frameErrors++;
+        this.lastError = String(e?.message ?? e);
         if (this.frameErrors <= 5) console.error("[Race3D] frame error", e);
       }
+      try { this.renderer.render(this.scene, this.camera); } catch {}
     });
   }
 
@@ -219,7 +227,7 @@ export class Race3D {
         // (반대로 넣으면 글자가 위아래로 뒤집힌다 — 실제로 그랬다)
         // u: 좌우 벽은 안쪽에서 볼 때 서로 반대 면을 보므로 한쪽만 뒤집어야
         //    글자가 거울상으로 보이지 않는다.
-        const u = side > 0 ? i / n : 1 - i / n;
+        const u = side > 0 ? 1 - i / n : i / n;  // 좌우 벽이 서로 반대 면을 향하므로 한쪽만 뒤집는다
         uvs.push(u, 0, u, 1);
       }
       for (let i = 0; i < n; i++) {
@@ -447,8 +455,9 @@ export class Race3D {
   private frame() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const state = net.state;
-    if (!state || !this.track) { this.renderer.render(this.scene, this.camera); return; }
+    if (!state || !this.track) return;
 
+    if (net.lastStateAt) this.lastServerAt = net.lastStateAt;
     const racing = state.phase === "racing";
     if (racing) this.readInput();
 
@@ -482,8 +491,42 @@ export class Race3D {
     this.syncProps(state, dt);
     this.updateCamera(me, dt);
     this.fadeSparks(dt);
+    this.collectDiagnostics(state, me, dt);
+  }
 
-    this.renderer.render(this.scene, this.camera);
+  /** NaN 방어 + 멈춤 감지. 원인 파악용 진단 정보를 화면에 띄운다. */
+  private collectDiagnostics(state: any, me: any, dt: number) {
+    // 좌표가 NaN 이 되면 카트도 카메라도 그려지지 않아 화면이 통째로 멈춘 것처럼 보인다.
+    if (!Number.isFinite(this.local.x) || !Number.isFinite(this.local.y) ||
+        !Number.isFinite(this.local.heading) || !Number.isFinite(this.local.speed)) {
+      this.lastError = "local NaN → 서버 좌표로 복구";
+      if (me) this.syncLocal(me);
+      else { this.local.x = 0; this.local.y = 0; this.local.heading = 0; this.local.speed = 0; }
+    }
+
+    const moved = Math.hypot(this.local.x - this.lastLocal.x, this.local.y - this.lastLocal.y);
+    this.lastLocal = { x: this.local.x, y: this.local.y };
+    const pressing = this.ctrl.throttle !== 0 || this.ctrl.steer !== 0;
+    if (state.phase === "racing" && pressing && moved < 0.6 && me && me.stunMs <= 0) {
+      this.stallMs += dt * 1000;
+    } else {
+      this.stallMs = 0;
+    }
+
+    (window as any).__ipr = {
+      phase: state.phase,
+      speed: Math.round(this.local.speed),
+      serverSpeed: me ? Math.round(me.speed) : null,
+      gap: me ? Math.round(Math.hypot(me.x - this.local.x, me.y - this.local.y)) : null,
+      stunMs: me?.stunMs ?? null,
+      respawnMs: me?.respawnMs ?? null,
+      quizActive: me?.quizActive ?? null,
+      keys: { ...this.ctrl },
+      stallMs: Math.round(this.stallMs),
+      frameErrors: this.frameErrors,
+      lastError: this.lastError,
+      serverAgeMs: Math.round(performance.now() - this.lastServerAt),
+    };
   }
 
   /** 엔진음·스키드음은 지속음이라 매 프레임 갱신한다. */
