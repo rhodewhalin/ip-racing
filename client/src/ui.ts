@@ -68,11 +68,20 @@ export const ui = {
     });
 
     $("btnMute").addEventListener("click", () => this.toggleSound());
+    $("btnFull").addEventListener("click", () => this.toggleFullscreen());
     window.addEventListener("keydown", (ev) => {
-      if ((ev as KeyboardEvent).key === "m" || (ev as KeyboardEvent).key === "M") this.toggleSound();
+      const key = (ev as KeyboardEvent).key;
+      if (key === "m" || key === "M") this.toggleSound();
+      if (key === "f" || key === "F") this.toggleFullscreen();
     });
 
     this._onStart = onStart;
+  },
+
+  toggleFullscreen() {
+    const el = document.documentElement;
+    if (!document.fullscreenElement) el.requestFullscreen?.().catch(() => {});
+    else document.exitFullscreen?.();
   },
 
   toggleSound() {
@@ -200,7 +209,7 @@ export const ui = {
     const panel = $("quiz");
     panel.classList.add(r.correct ? "ok" : "no");
     $("qkind").textContent = r.correct ? `✅ ${r.effect}` : `❌ ${r.effect}`;
-    $("qtext").textContent = r.explanation;
+    $("qtext").textContent = (r.correct ? "" : `정답: ${r.correctText || r.correctLabel} — `) + r.explanation;
     $("qopts").innerHTML = "";
     clearTimeout(this._quizTimer);
     this._quizTimer = setTimeout(() => this.hide("quiz"), 1800);
@@ -308,7 +317,7 @@ export const ui = {
         return `<div class="q ${seen && !got ? "wrong" : ""}">` +
           `<div class="tag">${badge}</div>` +
           `<div><b>${q.text}</b></div>` +
-          `<div class="tag">정답: ${q.correctLabel} · ${q.options.find((o: any) => o.label === q.correctLabel)?.text ?? ""}</div>` +
+          `<div class="tag">정답: ${q.correctText ?? ""}</div>` +
           `<div>💡 ${q.explanation}</div>` +
           `<div class="tag">출처: ${q.sourceName}</div>` +
           `</div>`;

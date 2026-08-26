@@ -13,9 +13,13 @@
 
 import * as THREE from "three";
 import { net, InputState } from "./net";
-import { KartBody, stepKart, KART } from "./physics";
+import { KartBody, stepKart, applyWall, KART } from "./physics";
 import { buildTrack, project, pointAt, TrackData } from "./track";
 import { audio } from "./audio";
+import {
+  asphaltTexture, grassTexture, curbTexture, barrierTexture, checkerTexture,
+  skyDome, mountains, tree, grandstand,
+} from "./scenery";
 
 const COLORS = [0x4da3ff, 0xff9f43, 0x37d67a, 0xc77dff];
 const UP = new THREE.Vector3(0, 1, 0);
@@ -76,22 +80,27 @@ export class Race3D {
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0d1526);
-    // 안개는 성능보다 "멀리 있는 것이 흐려진다"는 깊이감 때문에 넣는다
-    this.scene.fog = new THREE.Fog(0x0d1526, 1800, 5200);
+    // 안개 색을 지평선 하늘색과 맞춰야 멀리가 자연스럽게 녹아든다
+    this.scene.fog = new THREE.Fog(0x486f96, 2600, 6400);
 
-    this.camera = new THREE.PerspectiveCamera(62, w / h, 5, 9000);
+    this.camera = new THREE.PerspectiveCamera(62, w / h, 5, 12000);
     this.camera.position.set(0, 200, 0);
 
-    this.scene.add(new THREE.HemisphereLight(0x9fc0ff, 0x22331f, 1.15));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.25);
-    sun.position.set(1200, 2200, 800);
-    this.scene.add(sun);
+    this.scene.add(skyDome());
+    this.scene.add(mountains());
 
-    // 잔디 바닥
+    this.scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x2e4a2a, 1.0));
+    const sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
+    sun.position.set(1600, 2600, 1000);
+    this.scene.add(sun);
+    const rim = new THREE.DirectionalLight(0x88aaff, 0.45);
+    rim.position.set(-1400, 900, -1200);
+    this.scene.add(rim);
+
+    // 잔디 바닥 (절차적 텍스처)
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(24000, 24000),
-      new THREE.MeshLambertMaterial({ color: 0x1d3a26 })
+      new THREE.PlaneGeometry(26000, 26000),
+      new THREE.MeshLambertMaterial({ map: grassTexture() })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -2;
@@ -140,20 +149,22 @@ export class Race3D {
     const pts = this.track.points;
     const halfW = this.track.width / 2;
 
-    this.scene.add(this.ribbon(pts, -halfW, halfW, 0, 0x2c3d5f));           // 노면
-    this.scene.add(this.ribbon(pts, -halfW - 20, -halfW, 3, 0xd94f5c));     // 왼쪽 커브
-    this.scene.add(this.ribbon(pts, halfW, halfW + 20, 3, 0xd94f5c));       // 오른쪽 커브
-    this.scene.add(this.ribbon(pts, -6, 6, 1, 0x546d9e));                   // 중앙선
+    this.scene.add(this.ribbon(pts, -halfW, halfW, 0, 0xffffff, asphaltTexture()));   // 노면
+    this.scene.add(this.ribbon(pts, -halfW - 26, -halfW, 3, 0xffffff, curbTexture())); // 왼쪽 커브
+    this.scene.add(this.ribbon(pts, halfW, halfW + 26, 3, 0xffffff, curbTexture()));   // 오른쪽 커브
+    this.scene.add(this.ribbon(pts, -halfW + 8, -halfW + 16, 1, 0xe9eefb));            // 좌측 흰선
+    this.scene.add(this.ribbon(pts, halfW - 16, halfW - 8, 1, 0xe9eefb));              // 우측 흰선
 
     this.buildWalls(pts, halfW);
     this.buildStartLine(pts, halfW);
-    this.buildPosts(halfW);
+    this.buildScenery(halfW);
   }
 
   /** 중심선을 따라 좌우 오프셋으로 리본 메시를 만든다. */
-  private ribbon(pts: number[][], from: number, to: number, y: number, color: number) {
+  private ribbon(pts: number[][], from: number, to: number, y: number, color: number, map?: THREE.Texture) {
     const n = pts.length;
     const pos: number[] = [];
+    const uv: number[] = [];
     const idx: number[] = [];
 
     for (let i = 0; i < n; i++) {
@@ -163,6 +174,8 @@ export class Race3D {
       const nx = -Math.sin(ang), ny = Math.cos(ang);
       pos.push(a[0] + nx * from, y, a[1] + ny * from);
       pos.push(a[0] + nx * to, y, a[1] + ny * to);
+      const v = i / n;
+      uv.push(0, v, 1, v);
     }
     for (let i = 0; i < n; i++) {
       const i0 = i * 2, i1 = i * 2 + 1;
@@ -172,9 +185,10 @@ export class Race3D {
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
+    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, map, side: THREE.DoubleSide }));
   }
 
   /** 좌우 벽. 이제 코스 밖으로 나갈 수 없고, 닿으면 긁으며 미끄러진다. */
@@ -182,6 +196,7 @@ export class Race3D {
     const n = pts.length;
     for (const side of [-1, 1]) {
       const pos: number[] = [];
+      const uvs: number[] = [];
       const idx: number[] = [];
       for (let i = 0; i < n; i++) {
         const a = pts[i];
@@ -190,7 +205,9 @@ export class Race3D {
         const nx = -Math.sin(ang) * halfW * side;
         const ny = Math.cos(ang) * halfW * side;
         pos.push(a[0] + nx, 0, a[1] + ny);
-        pos.push(a[0] + nx, 74, a[1] + ny);
+        pos.push(a[0] + nx, 96, a[1] + ny);
+        const u = i / n;
+        uvs.push(u, 1, u, 0);
       }
       for (let i = 0; i < n; i++) {
         const i0 = i * 2, i1 = i * 2 + 1;
@@ -201,8 +218,9 @@ export class Race3D {
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
       geo.setIndex(idx);
       geo.computeVertexNormals();
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
       this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
-        color: 0xe6ebf5, side: THREE.DoubleSide,
+        map: barrierTexture(), side: THREE.DoubleSide,
       })));
     }
   }
@@ -210,8 +228,8 @@ export class Race3D {
   private buildStartLine(pts: number[][], halfW: number) {
     const a = pts[0], b = pts[1];
     const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
-    const geo = new THREE.PlaneGeometry(halfW * 2, 60);
-    const mat = new THREE.MeshLambertMaterial({ color: 0xf2f5ff });
+    const geo = new THREE.PlaneGeometry(halfW * 2, 90);
+    const mat = new THREE.MeshLambertMaterial({ map: checkerTexture() });
     const m = new THREE.Mesh(geo, mat);
     m.rotation.x = -Math.PI / 2;
     m.rotation.z = -ang;
@@ -219,7 +237,39 @@ export class Race3D {
     this.scene.add(m);
   }
 
-  /** 코스 옆 기둥. 3D에서 속도감은 대부분 "옆을 스쳐 지나가는 것"에서 나온다. */
+  /** 코스 주변 배경. 3D에서 속도감은 대부분 "옆을 스쳐 지나가는 것"에서 나온다. */
+  private buildScenery(halfW: number) {
+    if (!this.track) return;
+
+    // 나무 — 코스에서 조금 떨어진 곳에 불규칙하게
+    const treeProto = tree();
+    for (let s = 0; s < this.track.total; s += 320) { // 밀도를 낮춰 드로우콜을 줄인다
+      for (const side of [-1, 1]) {
+        if (Math.random() > 0.5) continue;
+        const p = pointAt(this.track, s + Math.random() * 120);
+        const off = (halfW + 190 + Math.random() * 520) * side;
+        const t = treeProto.clone();
+        t.position.set(p.x - Math.sin(p.angle) * off, 0, p.y + Math.cos(p.angle) * off);
+        const sc = 0.75 + Math.random() * 0.8;
+        t.scale.set(sc, sc, sc);
+        t.rotation.y = Math.random() * 6.28;
+        this.scene.add(t);
+      }
+    }
+
+    // 관중석 — 출발선 부근과 코스 3분의 1 지점
+    for (const frac of [0.02, 0.36, 0.7]) {
+      const p = pointAt(this.track, this.track.total * frac);
+      const off = halfW + 210;
+      const gs = grandstand();
+      gs.position.set(p.x - Math.sin(p.angle) * off, 0, p.y + Math.cos(p.angle) * off);
+      gs.rotation.y = -p.angle + Math.PI / 2;
+      this.scene.add(gs);
+    }
+
+    this.buildPosts(halfW);
+  }
+
   private buildPosts(halfW: number) {
     if (!this.track) return;
     const geo = new THREE.CylinderGeometry(9, 9, 90, 6);
@@ -250,50 +300,81 @@ export class Race3D {
   private makeKart(k: any, i: number): THREE.Group {
     const g = new THREE.Group();
     const color = COLORS[i % COLORS.length];
+    const paint = new THREE.MeshStandardMaterial({ color, metalness: 0.35, roughness: 0.42 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x161b28, metalness: 0.2, roughness: 0.7 });
+    const chrome = new THREE.MeshStandardMaterial({ color: 0xc9d4e6, metalness: 0.85, roughness: 0.25 });
 
-    // 모델은 +X 를 향하게 만든다 (heading 0 = +X 방향)
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(80, 26, 46),
-      new THREE.MeshLambertMaterial({ color })
-    );
-    body.position.y = 22;
-    g.add(body);
+    // 섀시: 뒤로 갈수록 넓어지게 두 덩이로 쌓아 실루엣을 만든다
+    const rear = new THREE.Mesh(new THREE.BoxGeometry(46, 24, 54), paint);
+    rear.position.set(-14, 24, 0); g.add(rear);
+    const front = new THREE.Mesh(new THREE.BoxGeometry(46, 18, 38), paint);
+    front.position.set(26, 21, 0); g.add(front);
 
-    const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(38, 26, 36),
-      new THREE.MeshLambertMaterial({ color: 0x101a2e })
-    );
-    cabin.position.set(-6, 45, 0);
-    g.add(cabin);
-
-    const nose = new THREE.Mesh(
-      new THREE.ConeGeometry(18, 30, 4),
-      new THREE.MeshLambertMaterial({ color: 0xffffff })
-    );
-    nose.rotation.z = -Math.PI / 2;
-    nose.position.set(50, 22, 0);
-    g.add(nose);
-
-    const wheelGeo = new THREE.CylinderGeometry(17, 17, 14, 10);
-    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x14171f });
-    for (const [wx, wz] of [[28, 28], [28, -28], [-28, 28], [-28, -28]]) {
-      const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.rotation.x = Math.PI / 2;
-      w.position.set(wx, 17, wz);
-      g.add(w);
+    // 사이드 포드
+    for (const z of [-30, 30]) {
+      const pod = new THREE.Mesh(new THREE.BoxGeometry(52, 16, 12), paint);
+      pod.position.set(0, 20, z); g.add(pod);
     }
 
+    // 프런트 윙 + 노즈콘
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(13, 34, 4), paint);
+    nose.rotation.z = -Math.PI / 2; nose.position.set(52, 20, 0); g.add(nose);
+    const fwing = new THREE.Mesh(new THREE.BoxGeometry(12, 5, 72), chrome);
+    fwing.position.set(56, 12, 0); g.add(fwing);
+
+    // 리어 윙 (지지대 2개 + 날개)
+    for (const z of [-14, 14]) {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(5, 26, 4), dark);
+      strut.position.set(-38, 40, z); g.add(strut);
+    }
+    const rwing = new THREE.Mesh(new THREE.BoxGeometry(16, 5, 62), chrome);
+    rwing.position.set(-38, 55, 0); g.add(rwing);
+
+    // 드라이버: 시트 + 몸통 + 헬멧
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(26, 16, 30), dark);
+    seat.position.set(0, 36, 0); g.add(seat);
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(13, 14, 12), paint);
+    helmet.position.set(2, 50, 0); g.add(helmet);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(6, 7, 20), new THREE.MeshStandardMaterial({
+      color: 0x0d1220, metalness: 0.9, roughness: 0.1,
+    }));
+    visor.position.set(12, 51, 0); g.add(visor);
+
+    // 바퀴: 타이어 + 휠(림). 앞바퀴는 조향에 따라 돌아간다.
+    const tyre = new THREE.CylinderGeometry(19, 19, 15, 14);
+    const rim = new THREE.CylinderGeometry(9, 9, 16, 10);
+    const tyreMat = new THREE.MeshStandardMaterial({ color: 0x101319, roughness: 0.9 });
+    const wheels: THREE.Group[] = [];
+    for (const [wx, wz, isFront] of [[30, 34, 1], [30, -34, 1], [-28, 36, 0], [-28, -36, 0]] as [number, number, number][]) {
+      const w = new THREE.Group();
+      const t = new THREE.Mesh(tyre, tyreMat); t.rotation.x = Math.PI / 2; w.add(t);
+      const r = new THREE.Mesh(rim, chrome); r.rotation.x = Math.PI / 2; w.add(r);
+      w.position.set(wx, 19, wz);
+      g.add(w);
+      if (isFront) wheels.push(w);
+    }
+    g.userData.frontWheels = wheels;
+
+    // 접지 그림자 (실제 그림자 대신 — 비용이 거의 없다)
+    const shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(58, 20),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false })
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 1.5;
+    g.add(shadow);
+
     const shield = new THREE.Mesh(
-      new THREE.SphereGeometry(62, 16, 12),
+      new THREE.SphereGeometry(66, 16, 12),
       new THREE.MeshBasicMaterial({ color: 0x4da3ff, transparent: true, opacity: 0.2 })
     );
-    shield.position.y = 30;
+    shield.position.y = 32;
     shield.visible = false;
     g.add(shield);
     g.userData.shield = shield;
 
-    const label = this.makeLabel(k.nickname + (k.isBot ? " [AI]" : ""));
-    label.position.y = 120;
+    const label = this.makeLabel(k.nickname + (k.isBot ? " [AI]" : ""), color);
+    label.position.y = 130;
     g.add(label);
     g.userData.label = label;
 
@@ -301,17 +382,17 @@ export class Race3D {
     return g;
   }
 
-  private makeLabel(text: string): THREE.Sprite {
+  private makeLabel(text: string, color = 0xffffff): THREE.Sprite {
     const cv = document.createElement("canvas");
     cv.width = 512; cv.height = 128;
     const cx = cv.getContext("2d")!;
     cx.font = "bold 62px system-ui, sans-serif";
     cx.textAlign = "center";
     cx.textBaseline = "middle";
-    cx.lineWidth = 10;
+    cx.lineWidth = 12;
     cx.strokeStyle = "rgba(6,10,20,.95)";
     cx.strokeText(text, 256, 64);
-    cx.fillStyle = "#eaf1ff";
+    cx.fillStyle = "#" + color.toString(16).padStart(6, "0");
     cx.fillText(text, 256, 64);
 
     const tex = new THREE.CanvasTexture(cv);
@@ -323,10 +404,13 @@ export class Race3D {
   private makePickup(p: any): THREE.Mesh {
     const isItem = p.kind === "item";
     const m = new THREE.Mesh(
-      isItem ? new THREE.BoxGeometry(56, 56, 56) : new THREE.BoxGeometry(64, 64, 64),
-      new THREE.MeshLambertMaterial({
-        color: isItem ? 0x2f7fe0 : 0xb5701f,
-        emissive: isItem ? 0x0d2a52 : 0x3a2408,
+      isItem ? new THREE.OctahedronGeometry(40) : new THREE.BoxGeometry(62, 62, 62),
+      new THREE.MeshStandardMaterial({
+        color: isItem ? 0x2f9fe0 : 0xd08a2a,
+        emissive: isItem ? 0x11527f : 0x5a3a08,
+        emissiveIntensity: 0.9,
+        metalness: 0.4, roughness: 0.3,
+        transparent: true, opacity: 0.92,
       })
     );
     m.position.set(p.x, 38, p.y);
@@ -362,11 +446,14 @@ export class Race3D {
         const pr = project(this.track, this.local.x, this.local.y);
         const guide = pointAt(this.track, pr.s); // 서버와 동일해야 예측이 어긋나지 않는다
         stepKart(this.local, this.ctrl, dt, {
-          offTrack: pr.offTrack,
+          offTrack: false,
           speedMul: me.speedMul,
           stunned: me.stunMs > 0,
           trackAngle: guide.angle,
         });
+        // 서버와 같은 벽 처리. 이게 빠지면 예측이 벽을 뚫고 나가서
+        // 서버 보정과 매 프레임 충돌하고, 화면상 카트가 제자리에서 떨린다.
+        applyWall(this.track, this.local, this.ctrl);
       }
       const gap = Math.hypot(me.x - this.local.x, me.y - this.local.y);
       if (gap > 240) this.syncLocal(me);
@@ -436,6 +523,10 @@ export class Race3D {
       // 드리프트 중에는 차체를 바깥으로 기울인다 — 미끄러지는 게 보여야 한다
       const lean = k.drifting ? -Math.sign(k.steer || 0) * 0.22 : 0;
       g.rotation.z += (lean - g.rotation.z) * Math.min(1, dt * 8);
+
+      // 앞바퀴가 조향에 따라 돌아간다. 작은 디테일인데 "차 같다"는 인상에 크게 기여한다.
+      const fw = g.userData.frontWheels as THREE.Group[] | undefined;
+      if (fw) for (const w of fw) w.rotation.y = -(k.steer ?? 0) * 0.5;
 
       (g.userData.shield as THREE.Mesh).visible = k.shieldMs > 0;
       g.visible = !(k.respawnMs > 0 && Math.floor(k.respawnMs / 110) % 2 === 0);

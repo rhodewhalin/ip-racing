@@ -13,6 +13,8 @@
 //  ③ 저속 선회 하한 상향 — 0.35 → 0.5. 감속했을 때 답답함이 줄어든다.
 // ============================================================
 
+import { TrackData, project, pointAt } from "./track";
+
 export interface KartInput {
   throttle: number; // -1 후진 / 0 / 1 가속
   steer: number;    // -1 좌 / 0 / 1 우 (키보드는 이진, 램프는 아래에서)
@@ -40,7 +42,7 @@ export interface StepContext {
 export const KART = {
   maxSpeed: 520,  // 3D 시점 + 조향 보조에 맞춰 소폭 하향. 반응할 시간을 준다.
   accel: 520,
-  reverseSpeed: 200,
+  reverseSpeed: 250,  // 벽에서 빠져나올 때 답답하지 않도록 상향
   brake: 880,
   drag: 240,
 
@@ -173,6 +175,60 @@ export function stepKart(b: KartBody, input: KartInput, dt: number, ctx: StepCon
 }
 
 /** 충전량으로 부스트 단계를 구한다. 0 = 부스트 없음, 1~3 = 단계. */
+// ============================================================
+// 벽 처리
+//
+// ⚠️ 서버와 클라이언트가 **같은 함수**를 써야 한다.
+//    이전 버전은 벽 로직이 서버에만 있었다. 그래서 클라이언트 예측은 벽을
+//    뚫고 나가려 하고 서버는 계속 안으로 되돌려서, 화면상으로는 카트가
+//    제자리에서 부들거리며 전혀 안 나가는 것처럼 보였다.
+// ============================================================
+
+export const WALL = {
+  margin: 10,
+  slideAlign: 0.30,  // 벽에 닿았을 때 진행 방향을 코스 축으로 끌어당기는 비율
+  speedKeep: 0.93,   // 긁을 때 남는 속도
+  minSlideSpeed: 60, // 이 아래로는 더 깎지 않는다 (완전 정지 방지)
+} as const;
+
+export function wallLimit(t: TrackData): number {
+  return t.width / 2 - KART.radius - WALL.margin;
+}
+
+/**
+ * 카트를 코스 안으로 밀어 넣고 벽을 따라 미끄러지게 한다.
+ * @returns 벽에 닿았으면 true
+ *
+ * 좌표를 offsetPoint(s, ±limit) 로 "다시 계산"하지 않는 것이 중요하다.
+ * 코너 안쪽에서는 여러 위치가 같은 s로 투영돼 매 틱 같은 자리로 되돌려진다.
+ * 대신 지금 좌표에서 법선 방향으로 초과분만큼만 밀어 넣는다.
+ */
+export function applyWall(t: TrackData, b: KartBody, input: KartInput): boolean {
+  const limit = wallLimit(t);
+  const pr = project(t, b.x, b.y);
+  if (Math.abs(pr.lateral) <= limit) return false;
+
+  const side = pr.lateral >= 0 ? 1 : -1;
+  const g = pointAt(t, pr.s);
+  const nx = -Math.sin(g.angle), ny = Math.cos(g.angle);
+  const delta = side * limit - pr.lateral;
+  b.x += nx * delta;
+  b.y += ny * delta;
+
+  // 후진으로 빠져나오려는 중이면 방향을 건드리지 않는다.
+  // 이게 없으면 벽이 카트를 계속 돌려세워서 영영 못 빠져나온다.
+  if (input.throttle >= 0) {
+    let d = g.angle - b.heading;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    if (b.speed < 0) d = d > 0 ? d - Math.PI : d + Math.PI;
+    b.heading += Math.max(-1, Math.min(1, d)) * WALL.slideAlign;
+  }
+
+  if (Math.abs(b.speed) > WALL.minSlideSpeed) b.speed *= WALL.speedKeep;
+  return true;
+}
+
 export function driftTier(charge: number): number {
   let tier = 0;
   for (let i = 0; i < KART.driftTiers.length; i++) {

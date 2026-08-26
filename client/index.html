@@ -7,9 +7,10 @@
     <style>
       :root { --bg:#0b1220; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --warn:#ffb020; }
       * { box-sizing:border-box; font-family:system-ui,"Apple SD Gothic Neo",sans-serif; }
-      body { margin:0; background:#070c16; color:var(--fg); display:flex; justify-content:center; }
-      #app { width:1280px; height:720px; position:relative; }
-      #game { width:1280px; height:720px; }
+      html, body { margin:0; height:100%; background:#070c16; color:var(--fg); overflow:hidden; }
+      /* 화면 전체를 채운다. 고정 1280x720 이었던 것을 뷰포트 기준으로 바꿈. */
+      #app { width:100vw; height:100vh; position:relative; }
+      #game { width:100%; height:100%; }
       .hidden { display:none !important; }
 
       .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(7,12,22,.86); }
@@ -24,36 +25,40 @@
       .prow { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed var(--line); font-size:14px; }
 
       /* HUD */
-      #hud { position:absolute; left:0; right:0; top:0; padding:14px 20px; display:flex; gap:26px;
+      #hud { position:absolute; left:0; right:0; top:0; padding:16px 24px; display:flex; gap:clamp(14px,2.2vw,34px);
              pointer-events:none; text-shadow:0 2px 6px rgba(0,0,0,.8); }
       #hud .cell { display:flex; flex-direction:column; }
       #hud .k { font-size:11px; color:#8ea3c8; letter-spacing:1px; }
       #hud .v { font-size:26px; font-weight:800; }
       #hudItem.ready { color:var(--warn); }
       #hudDrift.t1 { color:#66c2ff; } #hudDrift.t2 { color:#ff8a3d; } #hudDrift.t3 { color:#ff4d6d; }
-      #hud .v { font-size:22px; }
-      #standings { position:absolute; left:20px; top:120px; pointer-events:none;
+      #hud .v { font-size:clamp(18px,1.9vw,30px); }
+      #hud .k { font-size:clamp(9px,0.8vw,12px); }
+      #standings { position:absolute; left:24px; top:clamp(84px,10vh,130px); pointer-events:none;
                    background:rgba(10,16,32,.72); border:1px solid var(--line);
                    border-radius:10px; padding:8px 12px; font-size:13px; min-width:190px; }
       #standings .srow { display:flex; justify-content:space-between; gap:12px; padding:2px 0; }
       #standings .me { color:var(--accent); font-weight:800; }
       #standings .bot { color:#8ea3c8; }
-      #btnMute { position:absolute; right:20px; bottom:20px; background:rgba(10,16,32,.8);
+      #btnFull { position:absolute; right:78px; bottom:24px; background:rgba(10,16,32,.8);
                  color:var(--fg); border:1px solid var(--line); padding:8px 12px;
                  font-size:18px; border-radius:10px; }
-      #minimap { position:absolute; right:20px; top:20px; background:rgba(10,16,32,.72);
+      #btnMute { position:absolute; right:24px; bottom:24px; background:rgba(10,16,32,.8);
+                 color:var(--fg); border:1px solid var(--line); padding:8px 12px;
+                 font-size:18px; border-radius:10px; }
+      #minimap { position:absolute; right:24px; top:24px; background:rgba(10,16,32,.72);
                  border:1px solid var(--line); border-radius:10px; pointer-events:none; }
-      #game { width:1280px; height:720px; overflow:hidden; }
+      #game { width:100%; height:100%; overflow:hidden; }
       #game canvas { display:block; width:100% !important; height:100% !important; }
       #hud.offtrack::after { content:"코스 이탈"; position:absolute; right:22px; top:18px;
              color:var(--warn); font-weight:800; font-size:18px; }
 
       /* 카운트다운 */
       #countdown { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
-      #countnum { font-size:120px; font-weight:900; color:#fff; text-shadow:0 6px 30px rgba(77,163,255,.9); }
+      #countnum { font-size:clamp(90px,14vw,190px); font-weight:900; color:#fff; text-shadow:0 6px 30px rgba(77,163,255,.9); }
 
       /* 퀴즈 — 우하단 카드. 레이스를 가리지 않는다. */
-      .quiz-card { position:absolute; right:20px; bottom:20px; width:440px;
+      .quiz-card { position:absolute; right:24px; bottom:88px; width:clamp(360px,30vw,520px);
                    background:rgba(16,24,44,.96); border:2px solid var(--line);
                    border-radius:14px; padding:14px 16px; }
       .quiz-card.escape { border-color:var(--bad); }
@@ -99,6 +104,7 @@
 
       <div id="standings" class="hidden"></div>
       <button id="btnMute" title="소리 켜기/끄기 (M)">🔊</button>
+      <button id="btnFull" title="전체화면 (F)">⛶</button>
       <canvas id="minimap" width="240" height="160" class="hidden"></canvas>
 
       <div id="countdown" class="hidden"><div id="countnum"></div></div>
@@ -115,7 +121,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v7 · 벽 고정 버그 수정</span></p>
+          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v9 · 46문항 · 새 에셋 · 전체화면</span></p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>
@@ -132,7 +138,7 @@
             <button id="btnReady" style="width:100%">준비 완료</button>
           </div>
           <p class="sub" style="margin-top:14px">
-            ↑ 가속 · ↓ 브레이크 · ← → 조향 · <b>Shift</b> 드리프트 · <b>Space</b> 아이템 · 문제는 <b>1 2 3</b> · <b>M</b> 음소거
+            ↑ 가속 · <b>↓ 브레이크&후진</b> · ← → 조향 · <b>Shift</b> 드리프트 · <b>Space</b> 아이템 · 문제는 <b>1 2 3</b> · <b>M</b> 음소거 · <b>F</b> 전체화면
           </p>
           <p class="sub" id="lobbyMsg" style="margin:0"></p>
         </div>
