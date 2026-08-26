@@ -177,6 +177,17 @@ export const ui = {
 
     $("hud").classList.toggle("offtrack", me.offTrack && Math.abs(me.speed) > 60);
 
+    // 완주 배너 — 골인 후 결과까지 기다리는 시간을 명시한다.
+    // 예전에는 골인하면 차가 멈춘 채 아무 안내 없이 최대 12초를 기다렸다.
+    if (me.finished) {
+      $("spinbanner").classList.remove("hidden");
+      $("spinbanner").style.background = "rgba(55,214,122,.92)";
+      const left = s.endsInMs > 0 ? ` (${Math.ceil(s.endsInMs / 1000)}초)` : "";
+      $("spintext").textContent = `🏁 완주! 다른 주자를 기다리는 중${left}`;
+      return;
+    }
+    $("spinbanner").style.background = "";
+
     // 피격 배너 — 스핀을 "게임이 멈춘 것"으로 오해하지 않도록 명확히 알린다
     const spinning = me.stunMs > 0;
     $("spinbanner").classList.toggle("hidden", !spinning);
