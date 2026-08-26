@@ -12,7 +12,7 @@
 import { Room, Client } from "colyseus";
 import { RoomState, KartState, PickupState, HazardState } from "./schema";
 import { CONFIG, ItemId, QuizKind } from "./gameConfig";
-import { KART, KartInput, stepKart, driftTier, driftTierInfo } from "./physics";
+import { KART, KartInput, stepKart, driftTier, driftTierInfo, applyWall } from "./physics";
 import {
   TRACK_POINTS, TRACK_WIDTH, buildTrack, project, pointAt, offsetPoint, TrackData,
 } from "./track";
@@ -24,7 +24,8 @@ import { gateLabel, Question } from "./questions";
 interface Pending {
   q: Question;
   kind: QuizKind;
-  correctLabel: string;
+  correctLabel: string;   // 섞은 뒤의 정답 라벨
+  shuffled: string[];     // 실제로 보낸 보기 순서
   timer: any;
 }
 
@@ -47,6 +48,8 @@ export class RaceRoom extends Room<RoomState> {
   private botItemAt = new Map<string, number>();
   private botSeq = 0;
   private stuckMs = new Map<string, number>();
+  private wallFx = new Map<string, number>();
+  private halfPassed = new Map<string, boolean>();  // 중간 체크포인트 통과 여부
   private raceStart = 0;
   private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
@@ -102,12 +105,15 @@ export class RaceRoom extends Room<RoomState> {
     // 출발선: 중심선 s=0 에서 좌우로 벌려 세운다
     const idx = this.state.karts.size;
     const lat = [-96, -32, 32, 96][idx] ?? 0;
-    const sp = offsetPoint(this.track, 0, lat);
+    // 출발선보다 살짝 앞에 세운다. 정확히 0에 두면 좌우로 벌린 카트가
+    // 출발선 뒤쪽으로 투영돼 가짜 랩이 세어진다.
+    const sp = offsetPoint(this.track, 80, lat);
     k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
 
     this.state.karts.set(client.sessionId, k);
     this.inputs.set(client.sessionId, { throttle: 0, steer: 0, drift: false });
-    this.prevS.set(client.sessionId, 0);
+    this.prevS.set(client.sessionId, project(this.track, k.x, k.y).s);
+    this.halfPassed.set(client.sessionId, false);
     this.wasDrifting.set(client.sessionId, false);
     this.offMs.set(client.sessionId, 0);
     this.lastGoodS.set(client.sessionId, 0);
@@ -170,12 +176,13 @@ export class RaceRoom extends Room<RoomState> {
       k.ready = true;
 
       const lat = [-96, -32, 32, 96][idx] ?? 0;
-      const sp = offsetPoint(this.track, 0, lat);
+      const sp = offsetPoint(this.track, 80, lat);
       k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
 
       this.state.karts.set(id, k);
       this.inputs.set(id, { throttle: 0, steer: 0, drift: false });
-      this.prevS.set(id, 0);
+      this.prevS.set(id, project(this.track, k.x, k.y).s);
+      this.halfPassed.set(id, false);
       this.wasDrifting.set(id, false);
       this.offMs.set(id, 0);
       this.lastGoodS.set(id, 0);
@@ -293,26 +300,24 @@ export class RaceRoom extends Room<RoomState> {
       let pr = project(this.track, k.x, k.y);
       k.respawnMs = Math.max(0, k.respawnMs - dtMs);
 
-      // --- 벽: 밖으로 못 나가되, 벽을 따라 미끄러진다 ---
+      // --- 벽 (physics.applyWall — 클라이언트 예측과 동일한 함수) ---
       if (CONFIG.wall.enabled) {
-        const limit = this.track.width / 2 - KART.radius - CONFIG.wall.margin;
-        if (Math.abs(pr.lateral) > limit) {
-          const side = pr.lateral >= 0 ? 1 : -1;
-          const p = offsetPoint(this.track, pr.s, side * limit);
-          k.x = p.x; k.y = p.y;
+        const body2 = {
+          x: k.x, y: k.y, heading: k.heading, speed: k.speed,
+          steerActual: k.steer, driftCharge: k.driftCharge, drifting: k.drifting,
+        };
+        const hit = applyWall(this.track, body2, input);
+        if (hit) {
+          k.x = body2.x; k.y = body2.y;
+          k.heading = body2.heading; k.speed = body2.speed;
 
-          // 진행 방향을 코스 방향으로 끌어당긴다 = 벽을 긁으며 앞으로 나아감.
-          // 이게 없으면 벽에 코를 박고 그대로 멈춘다.
-          let d = p.angle - k.heading;
-          while (d > Math.PI) d -= Math.PI * 2;
-          while (d < -Math.PI) d += Math.PI * 2;
-          // 후진 중이면 반대 방향으로 정렬
-          if (k.speed < 0) d = d > 0 ? d - Math.PI : d + Math.PI;
-          k.heading += Math.max(-1, Math.min(1, d)) * CONFIG.wall.slideAlign;
-
-          if (Math.abs(k.speed) > CONFIG.wall.minSlideSpeed) k.speed *= CONFIG.wall.speedKeep;
-          this.broadcast("fx", { type: "wall", id: k.sessionId, x: k.x, y: k.y });
+          // fx 는 매 틱 보내면 초당 30개 × 인원수가 된다. 4틱에 한 번만.
+          const n = this.wallFx.get(k.sessionId) ?? 0;
+          if (n % 4 === 0) this.broadcast("fx", { type: "wall", id: k.sessionId, x: k.x, y: k.y });
+          this.wallFx.set(k.sessionId, n + 1);
           pr = project(this.track, k.x, k.y);
+        } else {
+          this.wallFx.set(k.sessionId, 0);
         }
         k.offTrack = false;
         this.lastGoodS.set(k.sessionId, pr.s);
@@ -324,30 +329,49 @@ export class RaceRoom extends Room<RoomState> {
         } else {
           const acc = (this.offMs.get(k.sessionId) ?? 0) + dtMs;
           this.offMs.set(k.sessionId, acc);
-          const tooFar = Math.abs(pr.lateral) > this.track.width * CONFIG.respawnFarMul;
-          if (acc > CONFIG.respawnAfterMs || tooFar) {
-            this.respawn(k, this.lastGoodS.get(k.sessionId) ?? pr.s);
-            continue;
-          }
+          if (acc > CONFIG.respawnAfterMs) { this.respawn(k, this.lastGoodS.get(k.sessionId) ?? pr.s); continue; }
         }
       }
 
-      // --- 끼임 감지: 최후의 안전장치 ---
-      if (k.stunMs <= 0 && k.respawnMs <= 0 && Math.abs(k.speed) < CONFIG.stuckSpeed) {
-        const acc = (this.stuckMs.get(k.sessionId) ?? 0) + dtMs;
+      // --- 끼임 감지 ---
+      // ⚠️ 속도로 판단하면 안 된다. 벽에 박혀 제자리를 돌 때도 속도는 230이 나온다.
+      //    실제로 코스를 따라 얼마나 나아갔는지(Δs)로 판단해야 한다.
+      if (k.stunMs <= 0 && k.respawnMs <= 0) {
+        const before = this.prevS.get(k.sessionId) ?? pr.s;
+        let ds = pr.s - before;
+        if (ds < -this.track.total / 2) ds += this.track.total;  // 결승선 통과 보정
+        if (ds > this.track.total / 2) ds -= this.track.total;
+
+        // 그냥 서 있는 사람까지 잡으면 안 된다 — 가속하려는데 못 나아갈 때만 끼임이다
+        const trying = Math.abs(k.speed) > 40 || (this.inputs.get(k.sessionId)?.throttle ?? 0) !== 0;
+        const acc = (ds < CONFIG.stuckProgress && trying) ? (this.stuckMs.get(k.sessionId) ?? 0) + dtMs : 0;
         this.stuckMs.set(k.sessionId, acc);
         if (acc > CONFIG.stuckMs) {
           this.stuckMs.set(k.sessionId, 0);
-          this.respawn(k, pr.s + 60);
+          this.respawn(k, pr.s + 140);
           continue;
         }
       } else {
         this.stuckMs.set(k.sessionId, 0);
       }
 
-      // 랩: 뒤쪽 1/4 에서 앞쪽 1/4 로 넘어가면 한 바퀴
+      // 코스 중간을 지났는지 기록. 이게 없으면 출발선 근처에서 왔다 갔다 하는 것만으로
+      // 랩이 올라간다. 실제로 출발 직후 가짜 랩이 세어지고 있었다.
+      if (pr.s > this.track.total * 0.45 && pr.s < this.track.total * 0.6) {
+        this.halfPassed.set(k.sessionId, true);
+      }
+
+      // 랩: 뒤쪽 1/4 에서 앞쪽 1/4 로 넘어가되, 중간 체크포인트를 지났어야 인정
       const prev = this.prevS.get(k.sessionId) ?? pr.s;
-      if (prev > this.track.total * 0.75 && pr.s < this.track.total * 0.25) {
+      const crossed = prev > this.track.total * 0.75 && pr.s < this.track.total * 0.25;
+      if (crossed && !this.halfPassed.get(k.sessionId)) {
+        // 지름길/출발선 뒤에서 시작한 경우 — 랩으로 세지 않는다
+        this.prevS.set(k.sessionId, pr.s);
+        k.s = pr.s;
+        continue;
+      }
+      if (crossed) {
+        this.halfPassed.set(k.sessionId, false);
         k.lap += 1;
         const started = this.lapStart.get(k.sessionId) ?? this.raceStart;
         k.lastLapMs = now - started;
@@ -358,6 +382,7 @@ export class RaceRoom extends Room<RoomState> {
         if (k.lap >= CONFIG.laps) this.finishKart(k, now);
       } else if (prev < this.track.total * 0.25 && pr.s > this.track.total * 0.75) {
         k.lap = Math.max(0, k.lap - 1); // 역주행 보정
+        this.halfPassed.set(k.sessionId, true);
       }
       this.prevS.set(k.sessionId, pr.s);
       k.s = pr.s;
@@ -545,14 +570,24 @@ export class RaceRoom extends Room<RoomState> {
     if (kind !== "escape" && now - (this.lastQuizAt.get(k.sessionId) ?? 0) < CONFIG.quizCooldownMs) return;
 
     const q = this.dispenser.next();
+
+    // ⚠️ 보기 순서를 매 출제마다 섞는다.
+    //    DB의 correctIndex가 한쪽으로 쏠려 있어서 "정답은 늘 1번" 패턴이 보였다.
+    //    문항을 늘리는 것만으로는 해결되지 않는다 — 위치 자체를 무작위화해야 한다.
+    const order = [0, 1, 2];
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    const shuffled = order.map((i) => q.options[i]);
+    const correctLabel = gateLabel(order.indexOf(q.correctIndex));
+
     k.quizActive = true;
     k.quizKind = kind;
     this.lastQuizAt.set(k.sessionId, now);
 
     const timer = this.clock.setTimeout(() => this.resolveQuiz(k.sessionId, ""), CONFIG.quizMs);
-    this.pending.set(k.sessionId, {
-      q, kind, correctLabel: gateLabel(q.correctIndex), timer,
-    });
+    this.pending.set(k.sessionId, { q, kind, correctLabel, shuffled, timer });
 
     // 봇은 메시지를 못 받으니 내부에서 스스로 답한다
     if (k.isBot) {
@@ -560,10 +595,10 @@ export class RaceRoom extends Room<RoomState> {
       const delay = Math.min(lo + Math.random() * (hi - lo), CONFIG.quizMs - 200);
       this.clock.setTimeout(() => {
         const right = Math.random() < CONFIG.bots.quizAccuracy;
-        const wrongLabels = ["A", "B", "C"].filter((l) => l !== gateLabel(q.correctIndex));
+        const wrong = ["A", "B", "C"].filter((l) => l !== correctLabel);
         this.resolveQuiz(
           k.sessionId,
-          right ? gateLabel(q.correctIndex) : wrongLabels[Math.floor(Math.random() * wrongLabels.length)]
+          right ? correctLabel : wrong[Math.floor(Math.random() * wrong.length)]
         );
       }, delay);
       return;
@@ -575,7 +610,7 @@ export class RaceRoom extends Room<RoomState> {
       kind,
       qId: q.id,
       text: q.text,
-      options: q.options.map((t, i) => ({ label: gateLabel(i), text: t })),
+      options: shuffled.map((t, i) => ({ label: gateLabel(i), text: t })),
       ms: kind === "escape" ? Math.min(CONFIG.quizMs, CONFIG.stunMs) : CONFIG.quizMs,
     });
   }
@@ -631,6 +666,7 @@ export class RaceRoom extends Room<RoomState> {
     client?.send("quiz_result", {
       correct,
       correctLabel: pend.correctLabel,
+      correctText: pend.shuffled[["A", "B", "C"].indexOf(pend.correctLabel)] ?? "",
       explanation: pend.q.explanation,
       sourceName: pend.q.sourceName,
       kind: pend.kind,
@@ -652,6 +688,7 @@ export class RaceRoom extends Room<RoomState> {
       this.offMs.delete(id);
       this.lastGoodS.delete(id);
       this.stuckMs.delete(id);
+      this.halfPassed.delete(id);
       this.botItemAt.delete(id);
     }
     this.bots.clear();
@@ -660,7 +697,7 @@ export class RaceRoom extends Room<RoomState> {
     let i = 0;
     for (const k of this.state.karts.values()) {
       const lat = [-96, -32, 32, 96][i++] ?? 0;
-      const sp = offsetPoint(this.track, 0, lat);
+      const sp = offsetPoint(this.track, 80, lat);
       k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
       k.speed = 0; k.steer = 0; k.drifting = false; k.driftCharge = 0;
       k.driftTier = 0; k.boostTier = 0;
@@ -673,7 +710,8 @@ export class RaceRoom extends Room<RoomState> {
       k.ready = false;
 
       this.inputs.set(k.sessionId, { throttle: 0, steer: 0, drift: false });
-      this.prevS.set(k.sessionId, 0);
+      this.prevS.set(k.sessionId, project(this.track, k.x, k.y).s);
+      this.halfPassed.set(k.sessionId, false);
       this.wasDrifting.set(k.sessionId, false);
       this.offMs.set(k.sessionId, 0);
       this.lastGoodS.set(k.sessionId, 0);
@@ -750,6 +788,7 @@ export class RaceRoom extends Room<RoomState> {
           text: q.text,
           options: q.options.map((t: string, i: number) => ({ label: gateLabel(i), text: t })),
           correctLabel: gateLabel(q.correctIndex),
+          correctText: q.options[q.correctIndex],
           explanation: q.explanation,
           sourceName: q.sourceName,
           sourceUrl: q.sourceUrl,
