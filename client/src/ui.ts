@@ -24,6 +24,7 @@ export const ui = {
   _onStart: (() => {}) as () => void,
   _quizTimer: 0 as any,
   _lastCount: -1 as number,
+  _shownLap: -1 as number,
 
   // ---------- 로비 ----------
   initLobby(onStart: () => void) {
@@ -100,7 +101,8 @@ export const ui = {
           `입력: ↑${d.keys.throttle} ←→${d.keys.steer} drift=${d.keys.drift}<br>` +
           `<span style="color:${d.stallMs > 800 ? "#ff5d6c" : "#8ea3c8"}">멈춤 지속: ${d.stallMs}ms</span><br>` +
           `서버 갱신 경과: ${d.serverAgeMs}ms<br>` +
-          `프레임 오류: ${d.frameErrors}${d.lastError ? ` — ${d.lastError}` : ""}`;
+          `프레임 오류: ${d.frameErrors} · 자동복구 ${d.recoveries ?? 0}회` +
+          (d.lastError ? `<br><span style="color:#ffb020">${d.lastError}</span>` : "");
       }, 250);
     }
   },
@@ -164,6 +166,19 @@ export const ui = {
     $("hudSpeed").textContent = String(Math.round(Math.abs(me.speed)));
     $("hudItem").classList.toggle("ready", !!me.item);
 
+    // 오른쪽 큰 랩 표시 (HUD 숫자는 눈에 안 들어온다는 피드백)
+    this.show("lapbanner");
+    const curLap = Math.min(me.lap + 1, s.laps);
+    $("lapnum").textContent = `${curLap} / ${s.laps}`;
+    $("lapbanner").classList.toggle("final", curLap === s.laps);
+    if (curLap !== this._shownLap) {
+      this._shownLap = curLap;
+      const el = $("lapbanner");
+      el.classList.add("pop");
+      setTimeout(() => el.classList.remove("pop"), 220);
+    }
+    $("laptime").textContent = me.bestLapMs > 0 ? `BEST ${fmt(me.bestLapMs)}s` : "";
+
     // 랩타임: 현재 랩 경과 + 베스트
     const cur = Math.max(0, (s.raceMs ?? 0) - (me.lapStartMs ?? 0));
     $("hudLapTime").textContent = fmt(cur);
@@ -222,6 +237,12 @@ export const ui = {
   },
 
   openQuiz(q: any) {
+    // ⚠️ 직전 결과 카드의 '닫기' 타이머를 반드시 취소한다.
+    //    안 그러면 결과 표시 후 1.8초 안에 새 문제가 뜰 때
+    //    그 타이머가 **새로 뜬 문제를 닫아버린다.** ("문제가 켜지자마자 사라짐")
+    clearTimeout(this._quizTimer);
+    this._quizTimer = 0;
+
     this.show("quiz");
     const panel = $("quiz");
     panel.className = `quiz-card ${q.kind}`;
@@ -319,6 +340,7 @@ export const ui = {
       this.hide("hud");
       this.hide("standings");
       this.hide("minimap");
+      this.hide("lapbanner");
       this.hide("quiz");
       this.show("lobby");
       this.show("waiting");
@@ -341,6 +363,7 @@ export const ui = {
     this.hide("hud");
     this.hide("standings");
     this.hide("minimap");
+    this.hide("lapbanner");
     this.show("result");
 
     $("scores").innerHTML = data.results

@@ -29,16 +29,20 @@ export const CONFIG = {
   // --- 퀴즈 ---
   // 핵심: 퀴즈는 레이스를 멈추지 않는다. 플레이어별로 따로 뜬다.
   quizMs: 5000,
-  quizCooldownMs: 2500, // 연속 출제 방지
+  // 픽업이 한 바퀴에 11개라 4~5초마다 문제가 떴다. 정신없다는 피드백에 맞춰
+  // 개수를 줄이고 쿨다운을 늘렸다.
+  quizCooldownMs: 3500,
 
   // --- 픽업 ---
-  itemBoxRespawnMs: 6000,
-  ipBlockRespawnMs: 12000,
+  itemBoxRespawnMs: 8000,
+  ipBlockRespawnMs: 14000,
   pickupRadius: 62,
 
   // 트랙 진행률(0~1) 기준 배치
-  itemBoxAt: [0.07, 0.20, 0.33, 0.46, 0.59, 0.72, 0.85],
-  ipBlockAt: [0.14, 0.40, 0.66, 0.91],
+  // 한 바퀴에 11개는 "먹고 나오면 또 나온다"는 피드백대로 정신없었다.
+  // 7개로 줄이고 간격을 고르게 폈다. 한 판(2바퀴)에 8~10문제가 목표.
+  itemBoxAt: [0.08, 0.28, 0.48, 0.68, 0.88],
+  ipBlockAt: [0.18, 0.58],
 
   // --- 퀴즈 결과 효과 ---
   blockCorrectBoost: 1.35,

@@ -57,6 +57,7 @@ export class Race3D {
   private lastServerAt = 0;
   private stallMs = 0;
   private lastLocal = { x: 0, y: 0 };
+  private recoveries = 0;
 
   constructor(private container: HTMLElement) {}
 
@@ -259,34 +260,64 @@ export class Race3D {
     this.scene.add(m);
   }
 
-  /** 코스 주변 배경. 3D에서 속도감은 대부분 "옆을 스쳐 지나가는 것"에서 나온다. */
+  /**
+   * 코스 주변 배경.
+   *
+   * ⚠️ 후보 지점을 법선 방향으로 밀어내는 것만으로는 부족하다.
+   *    코너에서 코스가 되돌아오면 그 자리가 **다른 구간의 노면 위**가 된다.
+   *    그래서 후보마다 전체 중심선까지의 거리를 다시 재고(project),
+   *    이미 놓인 오브젝트와의 간격도 검사한다.
+   */
   private buildScenery(halfW: number) {
     if (!this.track) return;
+    const placed: { x: number; y: number; r: number }[] = [];
 
-    // 나무 — 코스에서 조금 떨어진 곳에 불규칙하게
+    const fits = (x: number, y: number, radius: number, clearFromTrack: number) => {
+      // ① 코스(어느 구간이든)에서 충분히 떨어져 있는가
+      if (Math.abs(project(this.track!, x, y).lateral) < halfW + clearFromTrack) return false;
+      // ② 이미 놓인 오브젝트와 겹치지 않는가
+      for (const p of placed) {
+        if (Math.hypot(p.x - x, p.y - y) < p.r + radius) return false;
+      }
+      return true;
+    };
+
+    // 관중석 먼저 (자리를 많이 차지하므로 우선권)
+    for (const frac of [0.02, 0.36, 0.72]) {
+      const p = pointAt(this.track, this.track.total * frac);
+      for (const side of [1, -1]) {
+        const off = (halfW + 230) * side;
+        const x = p.x - Math.sin(p.angle) * off;
+        const y = p.y + Math.cos(p.angle) * off;
+        if (!fits(x, y, 300, 150)) continue;
+        const gs = grandstand();
+        gs.position.set(x, 0, y);
+        gs.rotation.y = -p.angle + (side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        this.scene.add(gs);
+        placed.push({ x, y, r: 300 });
+        break; // 한 지점에 하나만
+      }
+    }
+
+    // 나무
     const treeProto = tree();
-    for (let s = 0; s < this.track.total; s += 320) { // 밀도를 낮춰 드로우콜을 줄인다
+    for (let s = 0; s < this.track.total; s += 320) {
       for (const side of [-1, 1]) {
         if (Math.random() > 0.5) continue;
-        const p = pointAt(this.track, s + Math.random() * 120);
+        const p = pointAt(this.track, s + Math.random() * 140);
         const off = (halfW + 190 + Math.random() * 520) * side;
+        const x = p.x - Math.sin(p.angle) * off;
+        const y = p.y + Math.cos(p.angle) * off;
+        if (!fits(x, y, 90, 110)) continue;
+
         const t = treeProto.clone();
-        t.position.set(p.x - Math.sin(p.angle) * off, 0, p.y + Math.cos(p.angle) * off);
+        t.position.set(x, 0, y);
         const sc = 0.75 + Math.random() * 0.8;
         t.scale.set(sc, sc, sc);
         t.rotation.y = Math.random() * 6.28;
         this.scene.add(t);
+        placed.push({ x, y, r: 90 * sc });
       }
-    }
-
-    // 관중석 — 출발선 부근과 코스 3분의 1 지점
-    for (const frac of [0.02, 0.36, 0.7]) {
-      const p = pointAt(this.track, this.track.total * frac);
-      const off = halfW + 210;
-      const gs = grandstand();
-      gs.position.set(p.x - Math.sin(p.angle) * off, 0, p.y + Math.cos(p.angle) * off);
-      gs.rotation.y = -p.angle + Math.PI / 2;
-      this.scene.add(gs);
     }
 
     this.buildPosts(halfW);
@@ -306,9 +337,11 @@ export class Race3D {
       const p = pointAt(this.track, s);
       for (const side of [-1, 1]) {
         const off = (halfW + 55) * side;
-        dummy.position.set(
-          p.x - Math.sin(p.angle) * off, 45, p.y + Math.cos(p.angle) * off
-        );
+        const px = p.x - Math.sin(p.angle) * off;
+        const py = p.y + Math.cos(p.angle) * off;
+        // 다른 구간의 노면 위에 서지 않도록 확인
+        if (Math.abs(project(this.track, px, py).lateral) < halfW + 20) continue;
+        dummy.position.set(px, 45, py);
         dummy.updateMatrix();
         mesh.setMatrixAt(k++, dummy.matrix);
       }
@@ -514,6 +547,15 @@ export class Race3D {
       this.stallMs = 0;
     }
 
+    // 워치독: 화면이 멈췄는데 서버는 움직이고 있으면 예측을 강제로 되맞춘다.
+    // 원인이 무엇이든 2초 안에 스스로 복구된다.
+    if (this.stallMs > 2000 && me && Math.abs(me.speed) > 60) {
+      this.syncLocal(me);
+      this.stallMs = 0;
+      this.recoveries++;
+      this.lastError = `예측 멈춤 감지 → 강제 동기화 (${this.recoveries}회)`;
+    }
+
     (window as any).__ipr = {
       phase: state.phase,
       speed: Math.round(this.local.speed),
@@ -525,6 +567,7 @@ export class Race3D {
       keys: { ...this.ctrl },
       stallMs: Math.round(this.stallMs),
       frameErrors: this.frameErrors,
+      recoveries: this.recoveries,
       lastError: this.lastError,
       serverAgeMs: Math.round(performance.now() - this.lastServerAt),
     };

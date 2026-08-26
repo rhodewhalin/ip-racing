@@ -686,7 +686,9 @@ export class RaceRoom extends Room<RoomState> {
     k.quizKind = kind;
     this.lastQuizAt.set(k.sessionId, now);
 
-    const timer = this.clock.setTimeout(() => this.resolveQuiz(k.sessionId, ""), CONFIG.quizMs);
+    // escape 퀴즈는 스핀 시간보다 길 이유가 없다 (5초 카드가 2.2초 스핀보다 오래 떠 있었다)
+    const windowMs = kind === "escape" ? Math.min(CONFIG.quizMs, CONFIG.stunMs) : CONFIG.quizMs;
+    const timer = this.clock.setTimeout(() => this.resolveQuiz(k.sessionId, ""), windowMs);
     this.pending.set(k.sessionId, { q, kind, correctLabel, shuffled, timer });
 
     // 봇은 메시지를 못 받으니 내부에서 스스로 답한다
@@ -711,7 +713,7 @@ export class RaceRoom extends Room<RoomState> {
       qId: q.id,
       text: q.text,
       options: shuffled.map((t, i) => ({ label: gateLabel(i), text: t })),
-      ms: kind === "escape" ? Math.min(CONFIG.quizMs, CONFIG.stunMs) : CONFIG.quizMs,
+      ms: windowMs,
     });
   }
 

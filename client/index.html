@@ -54,6 +54,15 @@
               border:1px solid var(--line); border-radius:10px; padding:10px 14px;
               font-family:ui-monospace, monospace; font-size:12px; line-height:1.6;
               color:#cfe0ff; pointer-events:none; max-width:340px; }
+      /* 랩 표시: 미니맵 아래, 오른쪽에 크게 */
+      #lapbanner { position:absolute; right:24px; top:200px; text-align:right;
+                   pointer-events:none; text-shadow:0 3px 12px rgba(0,0,0,.85);
+                   transition:transform .18s, opacity .18s; }
+      #laptop { font-size:13px; letter-spacing:3px; color:#8ea3c8; font-weight:700; }
+      #lapnum { font-size:clamp(38px,4.4vw,64px); font-weight:900; line-height:1; color:#fff; }
+      #laptime { font-size:14px; color:#9fb0d0; margin-top:2px; }
+      #lapbanner.pop { transform:scale(1.35); }
+      #lapbanner.final #lapnum { color:#ffd166; }
       #minimap { position:absolute; right:24px; top:24px; background:rgba(10,16,32,.72);
                  border:1px solid var(--line); border-radius:10px; pointer-events:none; }
       #game { width:100%; height:100%; overflow:hidden; }
@@ -116,6 +125,7 @@
       <button id="btnFull" title="전체화면 (F)">⛶</button>
       <canvas id="minimap" width="240" height="160" class="hidden"></canvas>
 
+      <div id="lapbanner" class="hidden"><div id="laptop">LAP</div><div id="lapnum"></div><div id="laptime"></div></div>
       <div id="spinbanner" class="hidden"><span id="spintext"></span></div>
       <div id="diag" class="hidden"></div>
 
@@ -134,7 +144,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 2바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v14 · 시작 버그 · 밝은 BGM</span></p>
+          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 2바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v15 · 퀴즈·픽업 정리 · 랩 표시</span></p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>
