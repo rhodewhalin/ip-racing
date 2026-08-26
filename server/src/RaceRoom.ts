@@ -14,7 +14,7 @@ import { RoomState, KartState, PickupState, HazardState } from "./schema";
 import { CONFIG, ItemId, QuizKind } from "./gameConfig";
 import { KART, KartInput, stepKart, driftTier, driftTierInfo } from "./physics";
 import {
-  TRACK_POINTS, TRACK_WIDTH, buildTrack, project, offsetPoint, TrackData,
+  TRACK_POINTS, TRACK_WIDTH, buildTrack, project, pointAt, offsetPoint, TrackData,
 } from "./track";
 import { grantItem } from "./items";
 import { QuestionDispenser } from "./dispenser";
@@ -242,10 +242,15 @@ export class RaceRoom extends Room<RoomState> {
         steerActual: k.steer, driftCharge: k.driftCharge, drifting: k.drifting,
       };
 
+      // 조향 보조를 위해 현재 위치의 코스 방향을 넘긴다
+      const here = project(this.track, k.x, k.y);
+      const guide = pointAt(this.track, here.s + 120);
+
       stepKart(body, input, dt, {
         offTrack: k.offTrack,
         speedMul: k.speedMul,
         stunned: k.stunMs > 0,
+        trackAngle: guide.angle,
       });
 
       // 드리프트를 놓는 순간, 충전 단계에 따라 부스트가 터진다

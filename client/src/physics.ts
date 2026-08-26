@@ -33,10 +33,12 @@ export interface StepContext {
   offTrack: boolean;
   speedMul: number;
   stunned: boolean;
+  /** 현재 위치에서 코스가 향하는 방향(rad). 조향 보조에 쓴다. */
+  trackAngle?: number;
 }
 
 export const KART = {
-  maxSpeed: 560,
+  maxSpeed: 520,  // 3D 시점 + 조향 보조에 맞춰 소폭 하향. 반응할 시간을 준다.
   accel: 520,
   reverseSpeed: 200,
   brake: 880,
@@ -72,6 +74,14 @@ export const KART = {
 
   offTrackMul: 0.7,    // v1은 0.55. 리스폰이 있으니 즉발 페널티는 완화.
   offTrackDrag: 500,
+
+  // --- 조향 보조 ---
+  // 키보드 좌우만으로 코너를 도는 건 생각보다 어렵다.
+  // 조향을 놓으면 카트가 코스 방향으로 부드럽게 정렬된다.
+  // 이게 있으면 "손을 떼면 알아서 펴진다"는 안정감이 생긴다.
+  assistRate: 4.2,        // 초당 정렬 속도(rad)
+  assistMaxAngle: 1.0,    // 이보다 크게 어긋나 있으면 보조하지 않는다(역주행 방지)
+  assistWhileSteering: 0.6,  // 조향 중에도 이 비율만큼은 보조
 
   radius: 42,
   stunSpin: 7.5,
@@ -142,6 +152,20 @@ export function stepKart(b: KartBody, input: KartInput, dt: number, ctx: StepCon
   if (b.drifting) {
     b.driftCharge += dt;
     b.speed *= 1 - KART.driftGripLoss * dt * 3;
+  }
+
+  // 조향 보조: 코스 방향으로 살짝 끌어당긴다.
+  // 드리프트 중에는 끄는 게 맞다 — 일부러 미끄러뜨리는 동작이니까.
+  if (ctx.trackAngle !== undefined && !b.drifting && Math.abs(b.speed) > 90) {
+    let d = ctx.trackAngle - b.heading;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+
+    if (Math.abs(d) < KART.assistMaxAngle) {
+      const steering = Math.abs(b.steerActual) > 0.15;
+      const scale = steering ? KART.assistWhileSteering : 1;
+      b.heading += clamp(d, -1, 1) * KART.assistRate * scale * speedFactor * dt;
+    }
   }
 
   b.x += Math.cos(b.heading) * b.speed * dt;

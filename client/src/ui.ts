@@ -98,6 +98,8 @@ export const ui = {
   renderHud(s: any) {
     this.show("hud");
     this.show("standings");
+    this.show("minimap");
+    this.drawMinimap(s);
     const me = net.me();
     if (!me) return;
 
@@ -184,6 +186,53 @@ export const ui = {
     this._quizTimer = setTimeout(() => this.hide("quiz"), 1800);
   },
 
+  /** 미니맵 — 3D 추격 시점에서는 전체 코스가 안 보인다. 이게 유일한 조망이다. */
+  _mapT: null as null | { sc: number; ox: number; oy: number },
+
+  drawMinimap(s: any) {
+    const cv = $("minimap") as HTMLCanvasElement;
+    const g = cv.getContext("2d");
+    if (!g || !net.track) return;
+
+    const pts = net.track.points;
+    if (!this._mapT) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of pts) {
+        if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+        if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+      }
+      const pad = 14;
+      const sc = Math.min((cv.width - pad * 2) / (maxX - minX), (cv.height - pad * 2) / (maxY - minY));
+      this._mapT = { sc, ox: pad - minX * sc, oy: pad - minY * sc };
+    }
+    const T = this._mapT;
+    const mx = (x: number) => x * T.sc + T.ox;
+    const my = (y: number) => y * T.sc + T.oy;
+
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.strokeStyle = "#33456b";
+    g.lineWidth = 5;
+    g.lineJoin = "round";
+    g.beginPath();
+    g.moveTo(mx(pts[0][0]), my(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) g.lineTo(mx(pts[i][0]), my(pts[i][1]));
+    g.closePath();
+    g.stroke();
+
+    const colors = ["#4da3ff", "#ff9f43", "#37d67a", "#c77dff"];
+    ([...s.karts.values()] as any[]).forEach((k, i) => {
+      const self = k.sessionId === net.selfId;
+      g.fillStyle = colors[i % colors.length];
+      g.beginPath();
+      g.arc(mx(k.x), my(k.y), self ? 6 : 4.5, 0, Math.PI * 2);
+      g.fill();
+      if (self) {
+        g.strokeStyle = "#fff"; g.lineWidth = 2;
+        g.beginPath(); g.arc(mx(k.x), my(k.y), 9, 0, Math.PI * 2); g.stroke();
+      }
+    });
+  },
+
   // ---------- 결과 ----------
   bindEnd() {
     net.on("race_end", (d: any) => this.renderResult(d));
@@ -193,6 +242,7 @@ export const ui = {
     this.hide("quiz");
     this.hide("hud");
     this.hide("standings");
+    this.hide("minimap");
     this.show("result");
 
     $("scores").innerHTML = data.results

@@ -1,25 +1,17 @@
 // ============================================================
-// 클라이언트 엔트리. 로비 → 카트 레이스 + HUD/퀴즈/결과 오버레이.
+// 클라이언트 엔트리 — 로비 → 3D 레이스 + HUD/퀴즈/결과 오버레이
 // ============================================================
 
-import Phaser from "phaser";
-import { net } from "./net";
 import { ui } from "./ui";
-import { RaceScene } from "./RaceScene";
+import { Race3D } from "./Race3D";
 
-let game: Phaser.Game | null = null;
+let game: Race3D | null = null;
 
 function startGame() {
   if (game) return;
-  game = new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: "game",
-    width: 1280,
-    height: 720,
-    backgroundColor: "#0b1220",
-    scene: [RaceScene],
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-  });
+  const el = document.getElementById("game")!;
+  game = new Race3D(el);
+  game.start();
   ui.bindQuiz();
   ui.bindEnd();
 }

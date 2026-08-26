@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1280, initial-scale=1" />
-    <title>IP Racing — Stage 2</title>
+    <title>IP Racing — 3D</title>
     <style>
       :root { --bg:#0b1220; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --warn:#ffb020; }
       * { box-sizing:border-box; font-family:system-ui,"Apple SD Gothic Neo",sans-serif; }
@@ -38,6 +38,10 @@
       #standings .srow { display:flex; justify-content:space-between; gap:12px; padding:2px 0; }
       #standings .me { color:var(--accent); font-weight:800; }
       #standings .bot { color:#8ea3c8; }
+      #minimap { position:absolute; right:20px; top:20px; background:rgba(10,16,32,.72);
+                 border:1px solid var(--line); border-radius:10px; pointer-events:none; }
+      #game { width:1280px; height:720px; overflow:hidden; }
+      #game canvas { display:block; width:100% !important; height:100% !important; }
       #hud.offtrack::after { content:"코스 이탈"; position:absolute; right:22px; top:18px;
              color:var(--warn); font-weight:800; font-size:18px; }
 
@@ -91,6 +95,7 @@
       </div>
 
       <div id="standings" class="hidden"></div>
+      <canvas id="minimap" width="240" height="160" class="hidden"></canvas>
 
       <div id="countdown" class="hidden"><div id="countnum"></div></div>
 
@@ -106,7 +111,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 카트 레이싱 · 2~4인 · 3바퀴 · 인원이 모자라면 AI가 채웁니다</p>
+          <p class="sub">지식재산권 3D 카트 레이싱 · 2~4인 · 3바퀴 · 인원이 모자라면 AI가 채웁니다</p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>
