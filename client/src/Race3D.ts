@@ -15,6 +15,7 @@ import * as THREE from "three";
 import { net, InputState } from "./net";
 import { KartBody, stepKart, KART } from "./physics";
 import { buildTrack, project, pointAt, TrackData } from "./track";
+import { audio } from "./audio";
 
 const COLORS = [0x4da3ff, 0xff9f43, 0x37d67a, 0xc77dff];
 const UP = new THREE.Vector3(0, 1, 0);
@@ -46,6 +47,7 @@ export class Race3D {
   private sparks: THREE.Mesh[] = [];
   private sparkIdx = 0;
   private running = false;
+  private wallSfx = 0;
 
   constructor(private container: HTMLElement) {}
 
@@ -55,6 +57,8 @@ export class Race3D {
     this.initThree();
     this.bindInput();
     net.on("fx", (d: any) => this.onFx(d));
+    // 재경기: 로컬 예측·보간 상태를 새 출발선 기준으로 리셋한다
+    net.on("rematch", () => { this.localReady = false; this.ghost = {}; });
     if (net.track) this.buildWorld();
     else net.on("track", () => this.buildWorld());
     this.renderer.setAnimationLoop(() => this.frame());
@@ -373,12 +377,24 @@ export class Race3D {
       }
     }
 
+    this.updateAudio(state, me);
     this.syncKarts(state, dt);
     this.syncProps(state, dt);
     this.updateCamera(me, dt);
     this.fadeSparks(dt);
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** 엔진음·스키드음은 지속음이라 매 프레임 갱신한다. */
+  private updateAudio(state: any, me: any) {
+    if (!me) return;
+    audio.updateEngine(this.local.speed, KART.maxSpeed, {
+      racing: state.phase === "racing" && !me.finished,
+      boost: me.boostMs > 0,
+      drifting: me.drifting,
+    });
+    audio.setSkid(!!me.drifting, 1 + (me.driftTier || 0) * 0.25);
   }
 
   private readInput() {
@@ -517,15 +533,28 @@ export class Race3D {
 
     if (d.type === "bomb" || d.type === "spin") {
       for (let i = 0; i < 14; i++) this.emitSpark(g.position.x, g.position.z, Math.random() * 6.3, 0x4da3ff);
+      if (isMe) audio.hit();
     } else if (d.type === "drift_boost" || d.type === "boost") {
       const info = KART.driftTiers[(d.tier ?? 1) - 1];
       for (let i = 0; i < 10; i++) {
         this.emitSpark(g.position.x, g.position.z, this.local.heading, info ? info.color : 0xffd166);
       }
+      if (isMe) audio.boost(d.tier ?? 1);
     } else if (d.type === "respawn" && isMe) {
       this.localReady = false;
+      audio.respawn();
     } else if (d.type === "wall" && isMe) {
       for (let i = 0; i < 3; i++) this.emitSpark(d.x, d.y, this.local.heading, 0xffd9a0);
+      this.wallSfx = (this.wallSfx ?? 0) + 1;
+      if (this.wallSfx % 5 === 0) audio.wall(); // 매 틱 울리면 시끄럽다
+    } else if (d.type === "pickup" && isMe) {
+      audio.pickup();
+    } else if (d.type === "lap" && isMe) {
+      audio.lap();
+    } else if (d.type === "shield" && isMe) {
+      audio.shield();
+    } else if (d.type === "finish" && isMe) {
+      audio.finish();
     }
   }
 }

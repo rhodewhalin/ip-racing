@@ -55,6 +55,7 @@ export const net = {
   ready() { this.room?.send("set_ready"); },
   useItem() { this.room?.send("use_item"); },
   answer(choice: string) { this.room?.send("quiz_answer", { choice }); },
+  rematch() { this.room?.send("rematch"); },
 
   /** 입력은 바뀔 때만 보낸다. 30Hz로 계속 쏘면 낭비다. */
   sendInput(i: InputState) {

@@ -38,6 +38,9 @@
       #standings .srow { display:flex; justify-content:space-between; gap:12px; padding:2px 0; }
       #standings .me { color:var(--accent); font-weight:800; }
       #standings .bot { color:#8ea3c8; }
+      #btnMute { position:absolute; right:20px; bottom:20px; background:rgba(10,16,32,.8);
+                 color:var(--fg); border:1px solid var(--line); padding:8px 12px;
+                 font-size:18px; border-radius:10px; }
       #minimap { position:absolute; right:20px; top:20px; background:rgba(10,16,32,.72);
                  border:1px solid var(--line); border-radius:10px; pointer-events:none; }
       #game { width:1280px; height:720px; overflow:hidden; }
@@ -95,6 +98,7 @@
       </div>
 
       <div id="standings" class="hidden"></div>
+      <button id="btnMute" title="소리 켜기/끄기 (M)">🔊</button>
       <canvas id="minimap" width="240" height="160" class="hidden"></canvas>
 
       <div id="countdown" class="hidden"><div id="countnum"></div></div>
@@ -111,7 +115,7 @@
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v5 · 3D + 벽</span></p>
+          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v6 · 3D · 사운드 · 재경기</span></p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>
@@ -128,7 +132,7 @@
             <button id="btnReady" style="width:100%">준비 완료</button>
           </div>
           <p class="sub" style="margin-top:14px">
-            ↑ 가속 · ↓ 브레이크 · ← → 조향 · <b>Shift</b> 드리프트 · <b>Space</b> 아이템 · 문제는 <b>1 2 3</b>
+            ↑ 가속 · ↓ 브레이크 · ← → 조향 · <b>Shift</b> 드리프트 · <b>Space</b> 아이템 · 문제는 <b>1 2 3</b> · <b>M</b> 음소거
           </p>
           <p class="sub" id="lobbyMsg" style="margin:0"></p>
         </div>
@@ -141,6 +145,10 @@
           <div id="scores"></div>
           <h1 style="font-size:18px;margin-top:18px">🧠 IP REVIEW</h1>
           <div id="reviewlist"></div>
+          <div class="row" style="margin-top:14px">
+            <button id="btnRematch">🔁 다시 하기</button>
+            <button id="btnQuit" class="ghost">나가기</button>
+          </div>
         </div>
       </div>
     </div>

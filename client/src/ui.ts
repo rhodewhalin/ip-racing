@@ -7,6 +7,7 @@
 // ============================================================
 
 import { net } from "./net";
+import { audio } from "./audio";
 
 const $ = (id: string) => document.getElementById(id)!;
 const ITEM_LABEL: Record<string, string> = {
@@ -22,6 +23,7 @@ export const ui = {
 
   _onStart: (() => {}) as () => void,
   _quizTimer: 0 as any,
+  _lastCount: -1 as number,
 
   // ---------- 로비 ----------
   initLobby(onStart: () => void) {
@@ -59,11 +61,24 @@ export const ui = {
     code.addEventListener("keydown", (ev) => { if ((ev as KeyboardEvent).key === "Enter") doJoin(); });
 
     $("btnReady").addEventListener("click", () => {
+      audio.init();   // 브라우저 정책상 클릭 이후에만 소리를 켤 수 있다
+      audio.startMusic();
       net.ready();
       this.lobbyMsg("준비 완료. 혼자여도 AI가 자리를 채웁니다.");
     });
 
+    $("btnMute").addEventListener("click", () => this.toggleSound());
+    window.addEventListener("keydown", (ev) => {
+      if ((ev as KeyboardEvent).key === "m" || (ev as KeyboardEvent).key === "M") this.toggleSound();
+    });
+
     this._onStart = onStart;
+  },
+
+  toggleSound() {
+    audio.init();
+    const on = audio.toggle();
+    $("btnMute").textContent = on ? "🔊" : "🔇";
   },
 
   attachRoomState() {
@@ -74,7 +89,11 @@ export const ui = {
       if (s.phase === "countdown") {
         this.show("countdown");
         $("countnum").textContent = String(s.countdown || "GO!");
-      } else this.hide("countdown");
+        if (s.countdown !== this._lastCount) {
+          this._lastCount = s.countdown;
+          audio.countdown(s.countdown);
+        }
+      } else { this.hide("countdown"); this._lastCount = -1; }
       if (s.phase === "racing" || s.phase === "finished") this.renderHud(s);
     });
   },
@@ -177,6 +196,7 @@ export const ui = {
   },
 
   showQuizResult(r: any) {
+    if (r.correct) audio.correct(); else audio.wrong();
     const panel = $("quiz");
     panel.classList.add(r.correct ? "ok" : "no");
     $("qkind").textContent = r.correct ? `✅ ${r.effect}` : `❌ ${r.effect}`;
@@ -236,9 +256,31 @@ export const ui = {
   // ---------- 결과 ----------
   bindEnd() {
     net.on("race_end", (d: any) => this.renderResult(d));
+
+    // 재경기: 서버가 방을 초기화하면 로비 대기 화면으로 돌아간다
+    net.on("rematch", () => {
+      this.hide("result");
+      this.hide("hud");
+      this.hide("standings");
+      this.hide("minimap");
+      this.hide("quiz");
+      this.show("lobby");
+      this.show("waiting");
+      $("startrow").classList.add("hidden");
+      $("joinbox").classList.add("hidden");
+      this.lobbyMsg("새 판입니다. 준비 완료를 눌러주세요.");
+    });
+
+    $("btnRematch").addEventListener("click", () => {
+      net.rematch();
+      $("btnRematch").textContent = "초기화 중…";
+    });
+    $("btnQuit").addEventListener("click", () => location.reload());
   },
 
   renderResult(data: any) {
+    audio.stopMusic();
+    $("btnRematch").textContent = "🔁 다시 하기";
     this.hide("quiz");
     this.hide("hud");
     this.hide("standings");

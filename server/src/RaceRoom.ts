@@ -79,6 +79,14 @@ export class RaceRoom extends Room<RoomState> {
 
     this.onMessage("use_item", (client) => this.useItem(client.sessionId));
 
+    // 재경기: 결과 화면에서 "다시 하기"
+    this.onMessage("rematch", (client) => {
+      if (this.state.phase !== "finished") return;
+      const k = this.state.karts.get(client.sessionId);
+      if (!k) return;
+      this.resetForRematch();
+    });
+
     this.onMessage("quiz_answer", (client, msg: { choice?: string }) => {
       this.resolveQuiz(client.sessionId, msg?.choice || "");
     });
@@ -628,6 +636,71 @@ export class RaceRoom extends Room<RoomState> {
       kind: pend.kind,
       effect,
     });
+  }
+
+  /**
+   * 같은 방에서 다시 한 판. 방 코드와 참가자를 유지한 채 상태만 초기화한다.
+   * 봇은 제거했다가 다음 카운트다운에서 새로 채운다 (인원이 바뀌었을 수 있으므로).
+   */
+  private resetForRematch() {
+    // 봇 제거
+    for (const id of [...this.bots.keys()]) {
+      this.state.karts.delete(id);
+      this.inputs.delete(id);
+      this.prevS.delete(id);
+      this.wasDrifting.delete(id);
+      this.offMs.delete(id);
+      this.lastGoodS.delete(id);
+      this.stuckMs.delete(id);
+      this.botItemAt.delete(id);
+    }
+    this.bots.clear();
+
+    // 사람 카트 초기화
+    let i = 0;
+    for (const k of this.state.karts.values()) {
+      const lat = [-96, -32, 32, 96][i++] ?? 0;
+      const sp = offsetPoint(this.track, 0, lat);
+      k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
+      k.speed = 0; k.steer = 0; k.drifting = false; k.driftCharge = 0;
+      k.driftTier = 0; k.boostTier = 0;
+      k.lap = 0; k.s = 0; k.rank = 1; k.offTrack = false;
+      k.finished = false; k.finishMs = 0;
+      k.stunMs = 0; k.shieldMs = 0; k.boostMs = 0; k.speedMul = 1; k.respawnMs = 0;
+      k.item = ""; k.quizActive = false; k.quizKind = "";
+      k.correctCount = 0; k.answerCount = 0;
+      k.lastLapMs = 0; k.bestLapMs = 0; k.lapStartMs = 0;
+      k.ready = false;
+
+      this.inputs.set(k.sessionId, { throttle: 0, steer: 0, drift: false });
+      this.prevS.set(k.sessionId, 0);
+      this.wasDrifting.set(k.sessionId, false);
+      this.offMs.set(k.sessionId, 0);
+      this.lastGoodS.set(k.sessionId, 0);
+      this.stuckMs.set(k.sessionId, 0);
+    }
+
+    // 진행 중이던 퀴즈 정리
+    for (const [id, p] of this.pending) { p.timer?.clear?.(); }
+    this.pending.clear();
+    this.lastQuizAt.clear();
+    this.askedLog = [];
+
+    // 픽업/기름 초기화
+    for (const p of this.state.pickups) p.active = true;
+    this.respawnAt.clear();
+    while (this.state.hazards.length) this.state.hazards.pop();
+    this.hazardArm.clear();
+
+    // 문제 순서를 새로 섞는다
+    this.dispenser = new QuestionDispenser();
+
+    this.state.raceMs = 0;
+    this.state.countdown = 0;
+    this.state.phase = "lobby";
+    this.unlock();
+
+    this.broadcast("rematch");
   }
 
   // ---------- 종료 ----------
