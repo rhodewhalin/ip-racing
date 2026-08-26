@@ -66,10 +66,11 @@ export class Race3D {
     this.initThree();
     this.bindInput();
     net.on("fx", (d: any) => this.onFx(d));
+    net.on("track", () => this.buildWorld());
     // 재경기: 로컬 예측·보간 상태를 새 출발선 기준으로 리셋한다
     net.on("rematch", () => { this.localReady = false; this.ghost = {}; });
-    if (net.track) this.buildWorld();
-    else net.on("track", () => this.buildWorld());
+    // 이미 받았으면 즉시, 아니면 받을 때까지 재요청
+    net.ensureTrack(() => this.buildWorld());
     // 렌더 루프에서 예외가 한 번 터지면 이후 화면이 통째로 멈춘 것처럼 보인다.
     // 감싸두면 한 프레임만 건너뛰고 계속 돈다. 콘솔에 원인이 남는다.
     // 갱신에서 예외가 나도 **렌더는 반드시 실행한다.**

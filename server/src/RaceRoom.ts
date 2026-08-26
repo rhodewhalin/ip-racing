@@ -82,6 +82,13 @@ export class RaceRoom extends Room<RoomState> {
       if (typeof msg?.drift === "boolean") cur.drift = msg.drift;
     });
 
+    // ⚠️ onJoin 에서 보낸 "track" 메시지는 클라이언트가 핸들러를 등록하기 전에
+    //    도착하면 그대로 버려진다. 그러면 3D 월드가 만들어지지 않아 화면이
+    //    카운트다운에서 멈춘 것처럼 보인다. 클라이언트가 다시 달라고 할 수 있게 한다.
+    this.onMessage("request_track", (client) => {
+      client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
+    });
+
     this.onMessage("use_item", (client) => this.useItem(client.sessionId));
 
     // 재경기: 결과 화면에서 "다시 하기"
@@ -149,8 +156,11 @@ export class RaceRoom extends Room<RoomState> {
   }
 
   private startCountdown() {
+    if (this.state.phase !== "lobby") return; // 준비 버튼 연타로 두 번 시작되는 것 방지
     this.state.phase = "countdown";
     this.lock();
+    // 안전망: 카운트다운 시점에 한 번 더 보낸다
+    this.broadcast("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
     this.fillWithBots();
     this.state.countdown = Math.ceil(CONFIG.countdownMs / 1000);
     const iv = this.clock.setInterval(() => {
@@ -448,14 +458,20 @@ export class RaceRoom extends Room<RoomState> {
     const allDone = karts.every((k) => k.finished);
     if (allDone) { this.state.endsInMs = 0; this.endRace(); return; }
 
-    const humansDone = humans.length > 0 && humans.every((k) => k.finished);
+    // ⚠️ 손 놓고 있는 사람 때문에 완주한 사람들이 무한정 기다리면 안 된다.
+    //    일정 시간 전혀 나아가지 못한 사람은 '미참여'로 보고 계산에서 뺀다.
+    const isIdle = (k: KartState) =>
+      !k.finished && now - (this.lastAdvanceAt.get(k.sessionId) ?? this.raceStart) > CONFIG.idleHumanMs;
+
+    const engaged = humans.filter((k) => !isIdle(k));
+    const humansDone = engaged.length > 0 && engaged.every((k) => k.finished);
 
     const hardStop = this.raceStart + CONFIG.maxRaceMs;
 
     if (humansDone) {
-      // 사람은 다 들어왔다 → 짧게 기다렸다 결과
+      // 실제로 달린 사람은 다 들어왔다 → 짧게 기다렸다 결과
       const deadline = Math.min(
-        Math.max(...humans.map((k) => k.finishMs)) + CONFIG.humanGraceMs,
+        Math.max(...engaged.map((k) => k.finishMs)) + CONFIG.humanGraceMs,
         hardStop
       );
       this.state.endsInMs = Math.max(0, deadline - now);
@@ -465,7 +481,7 @@ export class RaceRoom extends Room<RoomState> {
 
     // ⚠️ 사람이 달리는 중이면 시간으로 끊지 않는다.
     //    끊는 유일한 조건은 "모두가 전혀 나아가지 못하고 있을 때"(AFK)다.
-    const running = humans.filter((k) => !k.finished);
+    const running = engaged.filter((k) => !k.finished);
     const allStalled = running.length > 0 && running.every(
       (k) => now - (this.lastAdvanceAt.get(k.sessionId) ?? this.raceStart) > CONFIG.afkMs
     );

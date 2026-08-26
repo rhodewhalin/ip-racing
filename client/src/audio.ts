@@ -49,7 +49,7 @@ export const audio = {
     this.sfxGain.connect(this.master);
 
     this.musicGain = ctx.createGain();
-    this.musicGain.gain.value = 0.16;
+    this.musicGain.gain.value = 0.30;  // 이전 0.16 은 너무 조용해 분위기가 안 살았다
     this.musicGain.connect(this.master);
 
     this.noiseBuf = this.makeNoise(ctx, 2);
@@ -184,8 +184,12 @@ export const audio = {
   // ---------- 게임 이벤트 ----------
 
   countdown(n: number) {
-    if (n > 0) this.tone(520, 0.18, "square", 0.28);
-    else { this.tone(880, 0.5, "square", 0.32); this.tone(1320, 0.5, "triangle", 0.18); }
+    if (n > 0) { this.tone(660, 0.16, "square", 0.3); this.tone(880, 0.12, "triangle", 0.14); }
+    else {
+      // GO! — 밝은 장3화음 팡파레
+      [1046.5, 1318.5, 1568].forEach((f, i) =>
+        setTimeout(() => this.tone(f, 0.45, "square", 0.3), i * 45));
+    }
   },
 
   /** 드리프트 부스트. 단계가 올라갈수록 높고 길다. */
@@ -207,37 +211,96 @@ export const audio = {
   correct() { [660, 880, 1170].forEach((f, i) => setTimeout(() => this.tone(f, 0.13, "triangle", 0.24), i * 75)); },
   wrong() { this.tone(300, 0.26, "sawtooth", 0.22, 150); },
 
-  lap() { this.tone(880, 0.14, "triangle", 0.24); setTimeout(() => this.tone(1320, 0.2, "triangle", 0.22), 120); },
+  lap() { [880, 1108, 1318].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, "square", 0.26), i * 70)); },
 
   shield() { this.tone(520, 0.22, "sine", 0.22, 880); },
   respawn() { this.tone(300, 0.3, "sine", 0.2, 620); },
 
   finish() {
+    // 상승 팡파레 + 마지막에 화음
     [523, 659, 784, 1047].forEach((f, i) =>
-      setTimeout(() => this.tone(f, 0.34, "triangle", 0.3), i * 130));
+      setTimeout(() => this.tone(f, 0.3, "square", 0.3), i * 110));
+    setTimeout(() => [1047, 1318, 1568].forEach((f) => this.tone(f, 0.8, "triangle", 0.2)), 460);
   },
 
   // ---------- BGM ----------
-  // 짧은 베이스 + 아르페지오 루프. 파일 없이 스텝 시퀀서로 돌린다.
+  // 이전 버전은 A단조 아르페지오라 침울했다.
+  // C장조 I–V–vi–IV 진행 + 킥/스네어/하이햇으로 밝고 빠르게 바꿨다.
 
   startMusic() {
     if (!this.ctx || this.musicTimer) return;
-    const bass = [55, 55, 73.4, 65.4];
-    const arp = [220, 277, 330, 277, 247, 330, 415, 330];
+
+    // C - G - Am - F (한 마디 8스텝)
+    const bass = [65.41, 65.41, 98.00, 98.00, 110.00, 110.00, 87.31, 87.31];
+    const chords = [
+      [523.25, 659.25, 783.99],  // C
+      [493.88, 587.33, 783.99],  // G
+      [523.25, 659.25, 880.00],  // Am
+      [523.25, 698.46, 880.00],  // F
+    ];
+    // 밝은 리드 멜로디 (펜타토닉 위주 — 어떤 코드에도 어울린다)
+    const lead = [
+      783.99, 0, 880.00, 987.77, 0, 880.00, 783.99, 0,
+      659.25, 0, 783.99, 880.00, 0, 783.99, 659.25, 0,
+      587.33, 0, 659.25, 783.99, 0, 880.00, 987.77, 0,
+      1046.50, 0, 987.77, 880.00, 0, 783.99, 659.25, 0,
+    ];
     this.musicStep = 0;
 
+    // 125ms = 16분음표 기준 약 120BPM. 이전 160ms보다 확실히 경쾌하다.
     this.musicTimer = setInterval(() => {
       if (!this.ctx || !this.enabled) return;
       const t = this.ctx.currentTime;
       const step = this.musicStep++;
+      const bar = Math.floor(step / 8) % 4;
 
-      if (step % 2 === 0) {
-        const b = bass[Math.floor(step / 8) % bass.length];
-        this.musicTone(b, 0.24, "square", 0.3, t);
+      // 베이스 (8분마다)
+      if (step % 2 === 0) this.musicTone(bass[step % bass.length], 0.20, "square", 0.26, t);
+
+      // 코드 스탭 (엇박에 짧게 — 리듬감의 핵심)
+      if (step % 4 === 2) {
+        for (const f of chords[bar]) this.musicTone(f, 0.11, "triangle", 0.075, t);
       }
-      this.musicTone(arp[step % arp.length], 0.16, "triangle", 0.14, t);
-      if (step % 4 === 0) this.musicNoise(0.05, 6000, 0.1);
-    }, 160);
+
+      // 리드 멜로디
+      const note = lead[step % lead.length];
+      if (note) this.musicTone(note, 0.14, "square", 0.10, t);
+
+      // 드럼
+      if (step % 8 === 0 || step % 8 === 5) this.kick();      // 킥
+      if (step % 8 === 4) this.snare();                        // 스네어
+      if (step % 2 === 1) this.musicNoise(0.03, 9000, 0.055);  // 하이햇
+    }, 125);
+  },
+
+  /** 킥: 빠르게 떨어지는 사인파 */
+  kick() {
+    if (!this.ctx || !this.musicGain) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.11);
+    g.gain.setValueAtTime(0.42, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.connect(g); g.connect(this.musicGain);
+    o.start(t); o.stop(t + 0.18);
+  },
+
+  /** 스네어: 노이즈 + 짧은 톤 */
+  snare() {
+    this.musicNoise(0.13, 1900, 0.20);
+    if (!this.ctx || !this.musicGain) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(240, t);
+    g.gain.setValueAtTime(0.14, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    o.connect(g); g.connect(this.musicGain);
+    o.start(t); o.stop(t + 0.12);
   },
 
   stopMusic() {
@@ -252,7 +315,7 @@ export const audio = {
     o.type = type;
     o.frequency.value = freq;
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g); g.connect(this.musicGain);
     o.start(t); o.stop(t + dur + 0.02);

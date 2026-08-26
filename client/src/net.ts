@@ -57,6 +57,23 @@ export const net = {
   useItem() { this.room?.send("use_item"); },
   answer(choice: string) { this.room?.send("quiz_answer", { choice }); },
   rematch() { this.room?.send("rematch"); },
+  requestTrack() { this.room?.send("request_track"); },
+
+  /**
+   * 트랙 좌표가 올 때까지 재요청한다.
+   * onJoin 에서 서버가 보낸 메시지는 핸들러 등록 전에 도착하면 버려지기 때문에,
+   * 한 번 놓치면 3D 월드가 영영 만들어지지 않는다 (화면이 카운트다운에서 멈춤).
+   */
+  ensureTrack(onReady?: () => void) {
+    if (this.track) { onReady?.(); return; }
+    let tries = 0;
+    const iv = setInterval(() => {
+      if (this.track) { clearInterval(iv); onReady?.(); return; }
+      if (++tries > 20) { clearInterval(iv); console.error("[net] 트랙 수신 실패"); return; }
+      this.requestTrack();
+    }, 400);
+    this.requestTrack();
+  },
 
   /** 입력은 바뀔 때만 보낸다. 30Hz로 계속 쏘면 낭비다. */
   sendInput(i: InputState) {
