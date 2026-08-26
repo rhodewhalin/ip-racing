@@ -81,6 +81,50 @@ export function project(t: TrackData, x: number, y: number): Projection {
   return { s: best.s, lateral: best.lateral, offTrack: Math.abs(best.lateral) > t.width / 2 };
 }
 
+/**
+ * 힌트를 이용한 근접 투영. 이전 프레임의 세그먼트 인덱스 주변만 검사한다.
+ * 전수 검사(240개)를 17개로 줄인다 — 서버 부하와 대규모 시뮬레이션 속도에 직결.
+ * 창 가장자리가 최적이면 위치가 크게 튄 것이므로 전수 검사로 되돌아간다.
+ */
+export function projectHinted(
+  t: TrackData, x: number, y: number, hint: number, win = 8
+): Projection & { index: number } {
+  const n = t.points.length;
+  let best = { s: 0, lateral: 0, d2: Infinity, index: 0 };
+  let edge = false;
+
+  for (let o = -win; o <= win; o++) {
+    const i = ((hint + o) % n + n) % n;
+    const a = t.points[i];
+    const b = t.points[(i + 1) % n];
+    const vx = b[0] - a[0], vy = b[1] - a[1];
+    const len2 = vx * vx + vy * vy;
+    if (len2 === 0) continue;
+    let u = ((x - a[0]) * vx + (y - a[1]) * vy) / len2;
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+    const px = a[0] + vx * u, py = a[1] + vy * u;
+    const dx = x - px, dy = y - py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < best.d2) {
+      const len = Math.sqrt(len2);
+      best = { s: t.cum[i] + len * u, lateral: (vx * dy - vy * dx) / len, d2, index: i };
+      edge = (o === -win || o === win);
+    }
+  }
+
+  if (edge || best.d2 === Infinity) {
+    const full = project(t, x, y);
+    let idx = 0;
+    while (idx < n - 1 && t.cum[idx + 1] <= full.s) idx++;
+    return { ...full, index: idx };
+  }
+  return {
+    s: best.s, lateral: best.lateral,
+    offTrack: Math.abs(best.lateral) > t.width / 2,
+    index: best.index,
+  };
+}
+
 export function pointAt(t: TrackData, s: number): { x: number; y: number; angle: number } {
   const d = ((s % t.total) + t.total) % t.total;
   let lo = 0, hi = t.points.length - 1;

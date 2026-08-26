@@ -50,6 +50,8 @@ export class RaceRoom extends Room<RoomState> {
   private stuckMs = new Map<string, number>();
   private wallFx = new Map<string, number>();
   private halfPassed = new Map<string, boolean>();  // 중간 체크포인트 통과 여부
+  private wasStunned = new Map<string, boolean>();
+  private lastAdvanceAt = new Map<string, number>();
   private raceStart = 0;
   private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
@@ -118,6 +120,7 @@ export class RaceRoom extends Room<RoomState> {
     this.offMs.set(client.sessionId, 0);
     this.lastGoodS.set(client.sessionId, 0);
     this.stuckMs.set(client.sessionId, 0);
+    this.lastAdvanceAt.set(client.sessionId, Date.now());
 
     // 트랙 지오메트리는 상태가 아니라 1회성 데이터 — 접속 시 한 번만 보낸다
     client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
@@ -156,7 +159,7 @@ export class RaceRoom extends Room<RoomState> {
         iv.clear();
         this.state.phase = "racing";
         this.raceStart = Date.now();
-        for (const k of this.state.karts.values()) { this.lapStart.set(k.sessionId, this.raceStart); k.lapStartMs = 0; }
+        for (const k of this.state.karts.values()) { this.lapStart.set(k.sessionId, this.raceStart); k.lapStartMs = 0; this.lastAdvanceAt.set(k.sessionId, this.raceStart); }
         this.broadcast("race_start");
       }
     }, 1000);
@@ -247,10 +250,36 @@ export class RaceRoom extends Room<RoomState> {
     this.driveBots(dt, now);
 
     for (const k of karts) {
-      if (k.finished) continue;
+      if (k.finished) {
+        // 골인 후에도 관성으로 굴러가게 둔다 (조작은 받지 않는다)
+        const fb = {
+          x: k.x, y: k.y, heading: k.heading, speed: k.speed,
+          steerActual: 0, driftCharge: 0, drifting: false,
+        };
+        const fp = project(this.track, k.x, k.y);
+        stepKart(fb, { throttle: 0, steer: 0, drift: false }, dt, {
+          offTrack: false, speedMul: 1, stunned: false,
+          trackAngle: pointAt(this.track, fp.s).angle,
+        });
+        applyWall(this.track, fb, { throttle: 0, steer: 0, drift: false });
+        k.x = fb.x; k.y = fb.y; k.heading = fb.heading; k.speed = fb.speed;
+        continue;
+      }
 
       // 상태 효과 타이머
+      const stunBefore = k.stunMs;
       k.stunMs = Math.max(0, k.stunMs - dtMs);
+
+      // 스핀이 끝나는 순간 진행 방향을 코스 쪽으로 세워준다.
+      // 이게 없으면 무작위 방향(심하면 정반대)을 보고 멈춰 서서, 그대로
+      // 가속하면 역주행한다. 조향 보조도 57° 이상 어긋나면 꺼져서 도움이 안 된다.
+      if (stunBefore > 0 && k.stunMs <= 0) {
+        const at = project(this.track, k.x, k.y);
+        k.heading = pointAt(this.track, at.s).angle;
+        k.speed = Math.max(k.speed, 170);
+        k.steer = 0;
+        this.broadcast("fx", { type: "recover", id: k.sessionId });
+      }
       k.shieldMs = Math.max(0, k.shieldMs - dtMs);
       k.boostMs = Math.max(0, k.boostMs - dtMs);
       k.speedMul = k.boostMs > 0 ? k.speedMul : 1;
@@ -342,8 +371,11 @@ export class RaceRoom extends Room<RoomState> {
         if (ds < -this.track.total / 2) ds += this.track.total;  // 결승선 통과 보정
         if (ds > this.track.total / 2) ds -= this.track.total;
 
-        // 그냥 서 있는 사람까지 잡으면 안 된다 — 가속하려는데 못 나아갈 때만 끼임이다
-        const trying = Math.abs(k.speed) > 40 || (this.inputs.get(k.sessionId)?.throttle ?? 0) !== 0;
+        // ⚠️ "가속하려는데 못 나아갈 때"만 끼임이다.
+        //    브레이크(-1)나 무입력(0)까지 포함하면, 문제를 읽으려 세운 사람을
+        //    1.6초마다 앞으로 순간이동시킨다. 실측으로 한 판에 36~58회였다.
+        const th = this.inputs.get(k.sessionId)?.throttle ?? 0;
+        const trying = CONFIG.stuckNeedsThrottle ? th > 0 : (Math.abs(k.speed) > 40 || th !== 0);
         const acc = (ds < CONFIG.stuckProgress && trying) ? (this.stuckMs.get(k.sessionId) ?? 0) + dtMs : 0;
         this.stuckMs.set(k.sessionId, acc);
         if (acc > CONFIG.stuckMs) {
@@ -384,6 +416,14 @@ export class RaceRoom extends Room<RoomState> {
         k.lap = Math.max(0, k.lap - 1); // 역주행 보정
         this.halfPassed.set(k.sessionId, true);
       }
+      // AFK 판정용: 실제로 앞으로 나아간 시각을 기록
+      {
+        let adv = pr.s - (this.prevS.get(k.sessionId) ?? pr.s);
+        if (adv < -this.track.total / 2) adv += this.track.total;
+        if (adv > this.track.total / 2) adv -= this.track.total;
+        if (adv > 1) this.lastAdvanceAt.set(k.sessionId, now);
+      }
+
       this.prevS.set(k.sessionId, pr.s);
       k.s = pr.s;
     }
@@ -394,12 +434,52 @@ export class RaceRoom extends Room<RoomState> {
     this.respawnPickups(now);
     this.recomputeRanks(karts);
 
-    // 종료 판정
-    const active = karts.filter((k) => !k.finished);
-    const firstDone = karts.find((k) => k.finished);
-    if (active.length === 0 || (firstDone && now - firstDone.finishMs > CONFIG.finishGraceMs)) {
-      this.endRace();
+    this.evaluateFinish(karts, now);
+  }
+
+  /**
+   * 종료 판정.
+   * 원칙: **사람이 달리고 있으면 기다린다.** 봇이 먼저 들어왔다고 끊지 않는다.
+   */
+  private evaluateFinish(karts: KartState[], now: number) {
+    if (karts.length === 0) return;
+
+    const humans = karts.filter((k) => !k.isBot);
+    const allDone = karts.every((k) => k.finished);
+    if (allDone) { this.state.endsInMs = 0; this.endRace(); return; }
+
+    const humansDone = humans.length > 0 && humans.every((k) => k.finished);
+
+    const hardStop = this.raceStart + CONFIG.maxRaceMs;
+
+    if (humansDone) {
+      // 사람은 다 들어왔다 → 짧게 기다렸다 결과
+      const deadline = Math.min(
+        Math.max(...humans.map((k) => k.finishMs)) + CONFIG.humanGraceMs,
+        hardStop
+      );
+      this.state.endsInMs = Math.max(0, deadline - now);
+      if (now >= deadline) this.endRace();
+      return;
     }
+
+    // ⚠️ 사람이 달리는 중이면 시간으로 끊지 않는다.
+    //    끊는 유일한 조건은 "모두가 전혀 나아가지 못하고 있을 때"(AFK)다.
+    const running = humans.filter((k) => !k.finished);
+    const allStalled = running.length > 0 && running.every(
+      (k) => now - (this.lastAdvanceAt.get(k.sessionId) ?? this.raceStart) > CONFIG.afkMs
+    );
+
+    if (allStalled || now >= hardStop) {
+      this.state.endsInMs = 0;
+      this.endRace();
+      return;
+    }
+
+    // 진행이 멈춘 지 오래됐으면 남은 시간을 알려준다
+    const worst = Math.max(...running.map((k) => this.lastAdvanceAt.get(k.sessionId) ?? this.raceStart));
+    const left = worst + CONFIG.afkMs - now;
+    this.state.endsInMs = left <= 30000 ? Math.max(0, left) : 0;
   }
 
   /** 코스로 되돌린다. 마지막으로 코스 위에 있던 지점의 중심선. */
@@ -421,7 +501,11 @@ export class RaceRoom extends Room<RoomState> {
   private finishKart(k: KartState, now: number) {
     k.finished = true;
     k.finishMs = now;
-    k.speed = 0;
+    // ⚠️ 예전엔 여기서 speed = 0 으로 급정거시켰다.
+    //    골인하자마자 차가 그 자리에 딱 서서 "멈췄다"로 보였다.
+    //    이제는 관성으로 굴러가다 자연스럽게 선다.
+    k.item = "";
+    k.quizActive = false;
     this.broadcast("fx", { type: "finish", id: k.sessionId });
   }
 

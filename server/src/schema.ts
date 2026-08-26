@@ -74,6 +74,7 @@ export class RoomState extends Schema {
   @type("number") countdown = 0;
   @type("number") laps = 3;
   @type("number") raceMs = 0;
+  @type("number") endsInMs = 0;  // 0보다 크면 곧 종료 (카운트다운 표시용)
 
   @type({ map: KartState }) karts = new MapSchema<KartState>();
   @type([PickupState]) pickups = new ArraySchema<PickupState>();

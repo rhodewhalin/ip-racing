@@ -81,6 +81,7 @@
       .qopt b { color:var(--accent); margin-right:8px; }
       .qopt.picked { background:var(--accent); color:#04122b; }
       .qopt:disabled { opacity:.55; cursor:default; }
+      #qhint { font-size:11px; color:#8ea3c8; margin-top:6px; text-align:center; }
       #qbar { height:6px; background:#0f1830; border-radius:5px; margin-top:10px; overflow:hidden; }
       #qfill { height:100%; width:100%; background:var(--accent); }
 
@@ -126,13 +127,14 @@
         <div id="qtext"></div>
         <div id="qopts"></div>
         <div id="qbar"><div id="qfill"></div></div>
+        <div id="qhint">달리면서 답해도 됩니다 · 키 <b>1 2 3</b></div>
       </div>
 
       <!-- 로비 -->
       <div id="lobby" class="overlay">
         <div class="card">
           <h1>IP RACING</h1>
-          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 3바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v12 · 완주 버그 수정 · 지식재산처</span></p>
+          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 2바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v13 · 완주율 99% · 2바퀴</span></p>
           <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
           <div class="row" id="startrow">
             <button id="btnCreate">게임 만들기</button>

@@ -1,5 +1,7 @@
 // ============================================================
 // 문제 DB — IP CITY
+// ⚠️ 기관명: 舊 특허청 → 현 지식재산처. 문항·해설·출처를 모두 반영했습니다.
+//    sourceUrl 은 아직 kipo.go.kr 로 두었으니, 공식 주소가 바뀌었다면 교체해 주세요.
 // 3.1 제약: question <= 60자, option <= 12자. options 3개 = A/B/C.
 // correctIndex는 서버만 안다 (IP Review 시점에만 공개).
 //
@@ -34,7 +36,7 @@ export const QUESTIONS: Question[] = [
     options: ["저작권", "특허", "상표"],
     correctIndex: 1,
     explanation: "특허는 새롭고 진보한 기술적 발명을 보호합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -45,7 +47,7 @@ export const QUESTIONS: Question[] = [
     options: ["영업비밀", "저작권", "상표"],
     correctIndex: 2,
     explanation: "상표권은 상품·서비스의 출처를 나타내는 표지를 보호합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -56,7 +58,7 @@ export const QUESTIONS: Question[] = [
     options: ["특허권", "상표권", "디자인권"],
     correctIndex: 2,
     explanation: "디자인권은 물품의 형상·모양·색채 등 외관을 보호합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -67,7 +69,7 @@ export const QUESTIONS: Question[] = [
     options: ["실용신안", "저작권", "특허권"],
     correctIndex: 1,
     explanation: "저작권은 인간의 사상·감정을 표현한 창작물을 보호합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -78,7 +80,7 @@ export const QUESTIONS: Question[] = [
     options: ["브랜드", "물품의 구조", "악곡"],
     correctIndex: 1,
     explanation: "실용신안은 물품의 형상·구조·조합에 관한 고안을 보호합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -89,7 +91,7 @@ export const QUESTIONS: Question[] = [
     options: ["등록일 후 10년", "영구", "출원일 후 20년"],
     correctIndex: 2,
     explanation: "특허권은 설정등록일부터 출원일 후 20년까지 존속합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -100,7 +102,7 @@ export const QUESTIONS: Question[] = [
     options: ["출원일 후 10년", "등록 후 5년", "출원일 후 20년"],
     correctIndex: 0,
     explanation: "실용신안권은 출원일 후 10년까지 존속합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -111,7 +113,7 @@ export const QUESTIONS: Question[] = [
     options: ["20년, 갱신불가", "영구", "10년, 갱신가능"],
     correctIndex: 2,
     explanation: "상표권은 10년이며 갱신등록으로 계속 연장할 수 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -122,7 +124,7 @@ export const QUESTIONS: Question[] = [
     options: ["등록 후 5년", "출원일 후 10년", "출원일 후 20년"],
     correctIndex: 2,
     explanation: "디자인권은 설정등록일부터 출원일 후 20년까지 존속합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -133,7 +135,7 @@ export const QUESTIONS: Question[] = [
     options: ["사후 50년", "공표 후 30년", "저작자 사후 70년"],
     correctIndex: 2,
     explanation: "저작재산권은 원칙적으로 저작자 사망 후 70년간 존속합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -144,7 +146,7 @@ export const QUESTIONS: Question[] = [
     options: ["신규성", "진보성", "심미성"],
     correctIndex: 2,
     explanation: "특허 3요건은 신규성·진보성·산업상 이용가능성입니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -155,7 +157,7 @@ export const QUESTIONS: Question[] = [
     options: ["신규성 없음", "진보성 없음", "기재불비"],
     correctIndex: 0,
     explanation: "출원 전 공지된 발명은 신규성이 없어 특허를 받을 수 없습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -166,7 +168,7 @@ export const QUESTIONS: Question[] = [
     options: ["신규성 없음", "산업성 없음", "진보성 없음"],
     correctIndex: 2,
     explanation: "선행기술로부터 쉽게 도출되면 진보성이 부정됩니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -177,7 +179,7 @@ export const QUESTIONS: Question[] = [
     options: ["화학물질", "제조방법", "자연법칙 자체"],
     correctIndex: 2,
     explanation: "자연법칙 그 자체는 발명에 해당하지 않아 특허 대상이 아닙니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -188,7 +190,7 @@ export const QUESTIONS: Question[] = [
     options: ["1년 6개월 후", "3년 후", "6개월 후"],
     correctIndex: 0,
     explanation: "출원일부터 1년 6개월이 지나면 출원 내용이 공개됩니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -199,7 +201,7 @@ export const QUESTIONS: Question[] = [
     options: ["출원 후 5년", "출원 즉시", "출원 후 3년"],
     correctIndex: 2,
     explanation: "출원일부터 3년 이내에 심사청구를 해야 합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -210,7 +212,7 @@ export const QUESTIONS: Question[] = [
     options: ["취하 간주", "자동 등록", "무기한 대기"],
     correctIndex: 0,
     explanation: "기간 내 심사청구가 없으면 출원은 취하된 것으로 봅니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -221,7 +223,7 @@ export const QUESTIONS: Question[] = [
     options: ["사업계획서", "명세서", "재무제표"],
     correctIndex: 1,
     explanation: "명세서는 발명의 내용과 권리범위를 기재한 핵심 서류입니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -232,7 +234,7 @@ export const QUESTIONS: Question[] = [
     options: ["요약서", "도면", "청구범위"],
     correctIndex: 2,
     explanation: "특허발명의 보호범위는 청구범위에 적힌 사항으로 정해집니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -243,7 +245,7 @@ export const QUESTIONS: Question[] = [
     options: ["선사용주의", "선출원주의", "선발명주의"],
     correctIndex: 1,
     explanation: "우리나라는 먼저 출원한 사람에게 권리를 주는 선출원주의입니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -254,7 +256,7 @@ export const QUESTIONS: Question[] = [
     options: ["정상 출원", "무권리자 출원", "자동 승계"],
     correctIndex: 1,
     explanation: "정당한 권리자가 아닌 자의 출원은 거절·무효 사유가 됩니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -265,7 +267,7 @@ export const QUESTIONS: Question[] = [
     options: ["20개월", "30개월", "12개월"],
     correctIndex: 1,
     explanation: "PCT 국제출원은 우선일부터 30개월 내 국내단계에 진입합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -276,7 +278,7 @@ export const QUESTIONS: Question[] = [
     options: ["헤이그", "마드리드", "PCT"],
     correctIndex: 1,
     explanation: "마드리드 의정서로 한 번에 여러 나라에 상표를 출원합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -287,7 +289,7 @@ export const QUESTIONS: Question[] = [
     options: ["헤이그", "PCT", "마드리드"],
     correctIndex: 0,
     explanation: "헤이그 협정으로 디자인을 국제출원할 수 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -298,7 +300,7 @@ export const QUESTIONS: Question[] = [
     options: ["12개월", "18개월", "6개월"],
     correctIndex: 0,
     explanation: "특허·실용신안은 최초 출원일부터 12개월입니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -309,7 +311,7 @@ export const QUESTIONS: Question[] = [
     options: ["6개월", "12개월", "18개월"],
     correctIndex: 0,
     explanation: "상표와 디자인은 6개월의 우선권 기간이 적용됩니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -320,7 +322,7 @@ export const QUESTIONS: Question[] = [
     options: ["등록한 국가", "아시아 전역", "전 세계"],
     correctIndex: 0,
     explanation: "속지주의에 따라 권리는 등록한 국가 안에서만 효력이 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -328,10 +330,10 @@ export const QUESTIONS: Question[] = [
     category: "기관",
     difficulty: "Easy",
     text: "우리나라 특허 업무를 관장하는 기관은?",
-    options: ["법무부", "공정위", "특허청"],
+    options: ["법무부", "공정위", "지식재산처"],
     correctIndex: 2,
-    explanation: "특허청(KIPO)이 산업재산권 출원·심사·등록을 담당합니다.",
-    sourceName: "대한민국 특허청",
+    explanation: "지식재산처가 산업재산권 출원·심사·등록을 담당합니다. (옛 특허청)",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -342,7 +344,7 @@ export const QUESTIONS: Question[] = [
     options: ["특허법원", "한국특허정보원", "저작권위"],
     correctIndex: 1,
     explanation: "KIPRIS는 한국특허정보원이 운영하는 특허정보 검색 서비스입니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -353,7 +355,7 @@ export const QUESTIONS: Question[] = [
     options: ["헌법재판소", "고등법원", "특허법원"],
     correctIndex: 2,
     explanation: "특허심판원 심결에 대한 소는 특허법원이 관할합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -361,10 +363,10 @@ export const QUESTIONS: Question[] = [
     category: "기관",
     difficulty: "Normal",
     text: "저작권 등록을 담당하는 기관은?",
-    options: ["한국저작권위", "특허청", "국세청"],
+    options: ["한국저작권위", "지식재산처", "국세청"],
     correctIndex: 0,
     explanation: "저작권 등록은 한국저작권위원회에서 담당합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -375,7 +377,7 @@ export const QUESTIONS: Question[] = [
     options: ["무효심판", "취소심판", "정정심판"],
     correctIndex: 0,
     explanation: "무효사유가 있는 등록특허는 무효심판으로 다툽니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -386,7 +388,7 @@ export const QUESTIONS: Question[] = [
     options: ["거절불복", "정정심판", "무효심판"],
     correctIndex: 1,
     explanation: "등록 후 청구범위를 감축·정정할 때 정정심판을 청구합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -397,7 +399,7 @@ export const QUESTIONS: Question[] = [
     options: ["취소심판", "무효심판", "거절불복심판"],
     correctIndex: 2,
     explanation: "거절결정을 받으면 거절결정불복심판을 청구할 수 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -408,7 +410,7 @@ export const QUESTIONS: Question[] = [
     options: ["정정심판", "무효심판", "권리범위확인"],
     correctIndex: 2,
     explanation: "권리범위확인심판으로 특정 실시가 권리범위에 속하는지 봅니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -419,7 +421,7 @@ export const QUESTIONS: Question[] = [
     options: ["즉시 무효", "자동 연장", "취소심판 대상"],
     correctIndex: 2,
     explanation: "3년 이상 불사용 상표는 취소심판의 대상이 됩니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -430,7 +432,7 @@ export const QUESTIONS: Question[] = [
     options: ["가격표시", "출처표시", "장식"],
     correctIndex: 1,
     explanation: "상표는 누가 만든 상품인지 알려주는 출처표시 기능이 핵심입니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -441,7 +443,7 @@ export const QUESTIONS: Question[] = [
     options: ["조어상표", "보통명칭", "도형상표"],
     correctIndex: 1,
     explanation: "상품의 보통명칭은 식별력이 없어 등록받기 어렵습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -452,7 +454,7 @@ export const QUESTIONS: Question[] = [
     options: ["특허 등록", "비공지성", "비밀관리성"],
     correctIndex: 0,
     explanation: "영업비밀은 등록 없이 비공지성·유용성·비밀관리성으로 보호됩니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -463,7 +465,7 @@ export const QUESTIONS: Question[] = [
     options: ["부정경쟁방지법", "민법", "특허법"],
     correctIndex: 0,
     explanation: "부정경쟁방지 및 영업비밀보호에 관한 법률이 규율합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -474,7 +476,7 @@ export const QUESTIONS: Question[] = [
     options: ["전용실시권", "통상실시권", "질권"],
     correctIndex: 0,
     explanation: "전용실시권자는 설정범위에서 독점적으로 실시할 수 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -485,7 +487,7 @@ export const QUESTIONS: Question[] = [
     options: ["정당한 보상", "권리 전부", "아무것도 없음"],
     correctIndex: 0,
     explanation: "직무발명을 승계시킨 종업원은 정당한 보상을 받을 권리가 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -493,10 +495,10 @@ export const QUESTIONS: Question[] = [
     category: "권리활용",
     difficulty: "Normal",
     text: "특허 침해에 대한 조치가 아닌 것은?",
-    options: ["침해금지청구", "손해배상청구", "특허청 압수"],
+    options: ["침해금지청구", "손해배상청구", "행정청 압수"],
     correctIndex: 2,
     explanation: "권리자는 민사상 침해금지·손해배상 등을 청구할 수 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -507,7 +509,7 @@ export const QUESTIONS: Question[] = [
     options: ["연차등록료", "심사청구료", "출원료"],
     correctIndex: 0,
     explanation: "권리를 유지하려면 매년 연차등록료를 납부해야 합니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -518,7 +520,7 @@ export const QUESTIONS: Question[] = [
     options: ["등록한 때", "창작한 때", "공표한 때"],
     correctIndex: 1,
     explanation: "저작권은 창작과 동시에 발생하며 등록은 요건이 아닙니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
   {
@@ -529,7 +531,7 @@ export const QUESTIONS: Question[] = [
     options: ["24개월", "6개월", "12개월"],
     correctIndex: 2,
     explanation: "공지 후 12개월 내 출원하면 공지예외를 주장할 수 있습니다.",
-    sourceName: "대한민국 특허청",
+    sourceName: "지식재산처",
     sourceUrl: "https://www.kipo.go.kr",
   },
 ];

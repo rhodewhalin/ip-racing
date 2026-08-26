@@ -86,8 +86,12 @@ export const KART = {
   assistWhileSteering: 0.6,  // 조향 중에도 이 비율만큼은 보조
 
   radius: 42,
-  stunSpin: 7.5,
-  stunDecel: 1400,
+  // 피격은 "완전 정지"가 아니라 "스핀아웃"이어야 한다.
+  // 이전 값(감속 1400, 하한 0)은 0.37초 만에 차를 세워버렸고,
+  // 3.2초 동안 제자리에서 도는 바람에 "차가 멈췄다"로 보였다.
+  stunSpin: 5.4,
+  stunDecel: 620,
+  stunGlide: 150,   // 스핀 중에도 이 속도로는 계속 미끄러진다
 } as const;
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
@@ -104,8 +108,9 @@ function rampSteer(current: number, target: number, dt: number): number {
 
 export function stepKart(b: KartBody, input: KartInput, dt: number, ctx: StepContext) {
   if (ctx.stunned) {
-    b.speed -= KART.stunDecel * dt;
-    if (b.speed < 0) b.speed = 0;
+    // 완전히 세우지 않고 활강 속도까지만 줄인다 = 미끄러지며 도는 스핀아웃
+    if (b.speed > KART.stunGlide) b.speed -= KART.stunDecel * dt;
+    else if (b.speed < KART.stunGlide) b.speed = Math.min(KART.stunGlide, b.speed + KART.accel * dt);
     b.heading += KART.stunSpin * dt;
     b.drifting = false;
     b.driftCharge = 0;
