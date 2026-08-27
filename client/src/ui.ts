@@ -75,6 +75,10 @@ export const ui = {
       if (key === "m" || key === "M") this.toggleSound();
       if (key === "f" || key === "F") this.toggleFullscreen();
       if (key === "d" || key === "D") this.toggleDiag();
+      if (key === "e" || key === "E") {
+        const on = audio.toggleEngine();
+        this.lobbyMsg(on ? "엔진음 켜짐" : "엔진음 꺼짐");
+      }
     });
 
     this._onStart = onStart;

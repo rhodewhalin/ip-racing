@@ -106,16 +106,23 @@ export function skyDome(): THREE.Mesh {
   const geo = new THREE.SphereGeometry(7000, 24, 16);
   const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false });
   const m = new THREE.Mesh(geo, mat);
-  m.renderOrder = -1;
+  m.renderOrder = -2;
   return m;
 }
 
-/** 먼 산 실루엣. 깊이감의 대부분이 여기서 나온다. */
+/**
+ * 먼 산 실루엣. 깊이감의 대부분이 여기서 나온다.
+ *
+ * ⚠️ 반드시 **카메라를 따라다니게** 해야 한다 (Race3D.updateCamera 참고).
+ *    이전 버전은 월드 원점 기준으로 고정해 뒀는데, 트랙 중심이 (2713,1541)이라
+ *    반지름 4700 링이 코스를 가로질렀다. 실측으로 트랙 240개 지점 중 46곳이
+ *    링과 겹쳤고, 그래서 "삼각형 지형이 경로에 나타나는" 현상이 생겼다.
+ */
 export function mountains(): THREE.Group {
   const g = new THREE.Group();
   const layers = [
-    { r: 5600, h: 900, color: 0x1a2b45, seg: 26 },
-    { r: 4700, h: 620, color: 0x223757, seg: 22 },
+    { r: 9000, h: 1500, color: 0x1a2b45, seg: 26 },
+    { r: 7800, h: 1050, color: 0x223757, seg: 22 },
   ];
   for (const L of layers) {
     const pos: number[] = [];
@@ -130,9 +137,12 @@ export function mountains(): THREE.Group {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     geo.computeVertexNormals();
-    g.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
       color: L.color, side: THREE.DoubleSide, fog: false,
-    })));
+      depthWrite: false,   // 절대 앞의 물체를 가리지 않는다
+    }));
+    m.renderOrder = -1;    // 항상 가장 먼저(=가장 뒤에) 그린다
+    g.add(m);
   }
   return g;
 }

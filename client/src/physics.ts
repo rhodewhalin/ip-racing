@@ -234,6 +234,52 @@ export function applyWall(t: TrackData, b: KartBody, input: KartInput): boolean 
   return true;
 }
 
+// ============================================================
+// 카트 충돌
+//
+// ⚠️ 벽과 같은 이유로 **서버·클라이언트가 같은 함수**를 써야 한다.
+//    이전엔 서버에만 있어서, 화면에서는 상대 차를 그냥 통과했다.
+//    부딪힌 감각이 전혀 없었던 이유다.
+// ============================================================
+
+export const BUMP = {
+  minDist: KART.radius * 2,  // 84
+  speedKeep: 0.86,           // 부딪히면 속도 손실
+  shove: 0.20,               // 진행 방향이 밀려나는 정도
+  minSeparate: 0.5,
+} as const;
+
+/**
+ * b 를 (ox, oy) 에 있는 다른 카트 밖으로 밀어낸다.
+ * @param share 1 = 나만 밀려남(클라이언트 예측), 0.5 = 양쪽이 절반씩(서버)
+ * @returns 접촉했으면 true
+ */
+export function resolveBump(
+  b: KartBody, ox: number, oy: number, share = 1
+): boolean {
+  const dx = b.x - ox, dy = b.y - oy;
+  let d = Math.hypot(dx, dy);
+  if (d >= BUMP.minDist) return false;
+  if (d < 0.0001) { d = 0.0001; }
+
+  const nx = dx / d, ny = dy / d;
+  const push = (BUMP.minDist - d) * share;
+  b.x += nx * push;
+  b.y += ny * push;
+
+  // 진행 방향을 밀려난 쪽으로 살짝 틀고 속도를 깎는다.
+  // 위치만 떼어놓으면 "스치는" 느낌만 나고 부딪힌 감각이 안 산다.
+  const away = Math.atan2(ny, nx);
+  let diff = away - b.heading;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  if (Math.abs(diff) < Math.PI / 2) {
+    b.heading += Math.max(-1, Math.min(1, diff)) * BUMP.shove;
+  }
+  if (Math.abs(b.speed) > 80) b.speed *= BUMP.speedKeep;
+  return true;
+}
+
 export function driftTier(charge: number): number {
   let tier = 0;
   for (let i = 0; i < KART.driftTiers.length; i++) {

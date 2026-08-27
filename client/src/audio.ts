@@ -18,6 +18,7 @@ export const audio = {
   musicGain: null as GainNode | null,
   sfxGain: null as GainNode | null,
   enabled: true,
+  engineOn: true,   // 엔진음만 따로 끌 수 있다 (E 키)
 
   // 엔진 (지속음)
   engOsc: [] as OscillatorNode[],
@@ -59,6 +60,8 @@ export const audio = {
 
   resume() { if (this.ctx?.state === "suspended") this.ctx.resume(); },
 
+  toggleEngine() { this.engineOn = !this.engineOn; return this.engineOn; },
+
   toggle() {
     this.enabled = !this.enabled;
     if (this.master && this.ctx) {
@@ -85,23 +88,40 @@ export const audio = {
 
     this.engFilter = ctx.createBiquadFilter();
     this.engFilter.type = "lowpass";
-    this.engFilter.frequency.value = 900;
-    this.engFilter.Q.value = 1.1;
+    this.engFilter.frequency.value = 1600;
+    this.engFilter.Q.value = 0.7;
 
     this.engGain.connect(this.engFilter);
     this.engFilter.connect(this.sfxGain!);
 
-    // 톱니 두 개를 살짝 어긋나게 겹쳐야 "웅웅" 하는 두께가 생긴다.
-    // 하나만 쓰면 삐- 하는 전자음이 된다.
-    for (const detune of [0, 11, -7]) {
+    // ⚠️ 이전엔 톱니파 3개를 겹쳐 "부우웅" 하는 저음 드론이 났다.
+    //    레이싱 게임보다는 냉장고 소리에 가까웠다.
+    //    삼각파를 기본으로 하고 톱니를 살짝만 섞어 밝고 가볍게 바꿨다.
+    const shapes: Array<[OscillatorType, number, number]> = [
+      ["triangle", 0, 1.0],
+      ["triangle", 9, 0.55],
+      ["sawtooth", -6, 0.22],   // 거친 질감은 아주 조금만
+    ];
+    for (const [type, detune, gain] of shapes) {
       const o = ctx.createOscillator();
-      o.type = "sawtooth";
-      o.frequency.value = 70;
+      const g = ctx.createGain();
+      o.type = type;
+      o.frequency.value = 120;
       o.detune.value = detune;
-      o.connect(this.engGain);
+      g.gain.value = gain;
+      o.connect(g); g.connect(this.engGain);
       o.start();
       this.engOsc.push(o);
     }
+
+    // 아주 약한 흔들림(트레몰로). 기계적인 정지음이 아니라 "돌아가는" 느낌을 준다.
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.frequency.value = 7;
+    lfoGain.gain.value = 0.012;
+    lfo.connect(lfoGain);
+    lfoGain.connect(this.engGain.gain);
+    lfo.start();
   },
 
   /** 매 프레임 호출. 속도에 따라 음정과 밝기가 변한다. */
@@ -113,12 +133,14 @@ export const audio = {
     // 기어가 바뀌는 느낌: 비율이 올라가다 특정 지점에서 음정이 살짝 떨어진다
     const gear = Math.floor(r * 3);
     const inGear = (r * 3) - gear;
-    const freq = 62 + inGear * 78 + gear * 16 + (opts.boost ? 26 : 0);
+    // 기본 음정을 올려 저음 드론 대신 가벼운 엔진음이 나게 한다
+    const freq = 130 + inGear * 150 + gear * 34 + (opts.boost ? 60 : 0);
 
-    for (const o of this.engOsc) o.frequency.setTargetAtTime(freq, t, 0.045);
-    this.engFilter.frequency.setTargetAtTime(600 + r * 2600 + (opts.boost ? 900 : 0), t, 0.06);
-    // 레이스 중이 아니면 완전히 끈다 (로비에서 엔진이 웅웅거리면 거슬린다)
-    this.engGain.gain.setTargetAtTime(opts.racing ? 0.05 + r * 0.10 : 0, t, 0.1);
+    for (const o of this.engOsc) o.frequency.setTargetAtTime(freq, t, 0.04);
+    this.engFilter.frequency.setTargetAtTime(1200 + r * 3200 + (opts.boost ? 1400 : 0), t, 0.06);
+    // 음량도 절반 이하로. 엔진은 배경이지 주인공이 아니다.
+    const vol = this.engineOn ? (opts.racing ? 0.022 + r * 0.05 : 0) : 0;
+    this.engGain.gain.setTargetAtTime(vol, t, 0.1);
   },
 
   // ---------- 드리프트 스키드 ----------

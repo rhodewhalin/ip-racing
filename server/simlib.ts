@@ -41,6 +41,11 @@ export interface RaceResult {
   stunCount: number;
   maxStallMs: number;
   maxNoAdvanceSec: number;
+  fwdCross: number;
+  backCross: number;
+  traveledFinal: number;
+  traveledMax: number;
+  backDist: number;
 }
 
 function curvature(t: TrackData, s: number, span = 260): number {
@@ -64,12 +69,13 @@ export function simulateRace(p: Profile, maxSec: number, rng: () => number, laps
 
   let hint = 0;
   let lap = 0, prevS = projectHinted(track, b.x, b.y, 0).s;
-  let halfPassed = false;
+  let traveled = 0, traveledMax = 0, backDist = 0;
   let speedMul = 1, boostMs = 0, stunMs = 0;
   let wasDrift = false, driftHold = 0;
   let stuckMs = 0, respawns = 0, wallTicks = 0, stunCount = 0;
   let stallMs = 0, maxStallMs = 0;
   let lastAdvanceTick = 0, maxNoAdvanceSec = 0;
+  let fwdCross = 0, backCross = 0;
   let quizCooldown = 0;
   let liftUntil = -1;
   const hist: number[] = [];
@@ -194,30 +200,25 @@ export function simulateRace(p: Profile, maxSec: number, rng: () => number, laps
     if (stunMs <= 0 && moved < 0.4) { stallMs += dt * 1000; maxStallMs = Math.max(maxStallMs, stallMs); }
     else stallMs = 0;
 
-    // --- 랩 ---
-    if (pr.s > track.total * 0.45 && pr.s < track.total * 0.6) halfPassed = true;
-    const crossed = prevS > track.total * 0.75 && pr.s < track.total * 0.25;
-    if (crossed && halfPassed) {
-      halfPassed = false;
-      lap++;
-      if (lap >= LAPS) {
-        return { finished: true, timeSec: (i + 1) / CONFIG.tickHz, laps: lap, respawns, wallTicks, stunCount, maxStallMs, maxNoAdvanceSec };
-      }
-    } else if (prevS < track.total * 0.25 && pr.s > track.total * 0.75) {
-      lap = Math.max(0, lap - 1);
-      halfPassed = true;
-    }
+    // --- 랩: 누적 주행거리 방식 (서버와 동일) ---
     {
-      let adv = pr.s - prevS;
-      if (adv < -track.total / 2) adv += track.total;
-      if (adv > track.total / 2) adv -= track.total;
-      if (adv > 1) lastAdvanceTick = i;
-      maxNoAdvanceSec = Math.max(maxNoAdvanceSec, (i - lastAdvanceTick) / CONFIG.tickHz);
+      let step = pr.s - prevS;
+      if (step > track.total / 2) step -= track.total;
+      if (step < -track.total / 2) step += track.total;
+      traveled += step;
+      if (step < 0) backDist += -step;
+      if (traveled > traveledMax) traveledMax = traveled;
+      if (step > 0) fwdCross++; // (통계용)
+      const newLap = Math.max(0, Math.floor(traveled / track.total));
+      if (newLap !== lap) lap = newLap;
+      if (lap >= LAPS) {
+        return { finished: true, timeSec: (i + 1) / CONFIG.tickHz, laps: lap, respawns, wallTicks, stunCount, maxStallMs, maxNoAdvanceSec, fwdCross, backCross, traveledFinal: traveled, traveledMax, backDist };
+      }
     }
     prevS = pr.s;
   }
 
-  return { finished: false, timeSec: maxSec, laps: lap, respawns, wallTicks, stunCount, maxStallMs, maxNoAdvanceSec };
+  return { finished: false, timeSec: maxSec, laps: lap, respawns, wallTicks, stunCount, maxStallMs, maxNoAdvanceSec, fwdCross, backCross, traveledFinal: traveled, traveledMax, backDist };
 }
 
 /** 재현 가능한 난수 */

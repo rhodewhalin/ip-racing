@@ -13,7 +13,7 @@
 
 import * as THREE from "three";
 import { net, InputState } from "./net";
-import { KartBody, stepKart, applyWall, KART } from "./physics";
+import { KartBody, stepKart, applyWall, resolveBump, KART } from "./physics";
 import { buildTrack, project, pointAt, TrackData } from "./track";
 import { audio } from "./audio";
 import {
@@ -58,6 +58,9 @@ export class Race3D {
   private stallMs = 0;
   private lastLocal = { x: 0, y: 0 };
   private recoveries = 0;
+  private bumpedAt = 0;
+  private sky!: THREE.Mesh;
+  private mounts!: THREE.Group;
 
   constructor(private container: HTMLElement) {}
 
@@ -105,8 +108,12 @@ export class Race3D {
     this.camera = new THREE.PerspectiveCamera(62, w / h, 5, 12000);
     this.camera.position.set(0, 200, 0);
 
-    this.scene.add(skyDome());
-    this.scene.add(mountains());
+    // 하늘과 산은 카메라를 따라다닌다 = 항상 지평선에 머문다.
+    // 고정해 두면 트랙과 겹쳐서 코스 위에 삼각형이 나타난다.
+    this.sky = skyDome();
+    this.mounts = mountains();
+    this.scene.add(this.sky);
+    this.scene.add(this.mounts);
 
     this.scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x2e4a2a, 1.0));
     const sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
@@ -429,7 +436,9 @@ export class Race3D {
     g.userData.shield = shield;
 
     const label = this.makeLabel(k.nickname + (k.isBot ? " [AI]" : ""), color);
-    label.position.y = 130;
+    label.position.y = 112;
+    // 내 카트 이름표는 숨긴다 — 누군지 알고 있고, 시야만 가린다
+    label.visible = k.sessionId !== net.selfId;
     g.add(label);
     g.userData.label = label;
 
@@ -441,7 +450,7 @@ export class Race3D {
     const cv = document.createElement("canvas");
     cv.width = 512; cv.height = 128;
     const cx = cv.getContext("2d")!;
-    cx.font = "bold 62px system-ui, sans-serif";
+    cx.font = "bold 54px system-ui, sans-serif";
     cx.textAlign = "center";
     cx.textBaseline = "middle";
     cx.lineWidth = 12;
@@ -452,7 +461,8 @@ export class Race3D {
 
     const tex = new THREE.CanvasTexture(cv);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-    sp.scale.set(280, 70, 1);
+    // 이전 280×70은 너무 커서 내 카트를 가렸다
+    sp.scale.set(150, 38, 1);
     return sp;
   }
 
@@ -510,6 +520,19 @@ export class Race3D {
         // 서버와 같은 벽 처리. 이게 빠지면 예측이 벽을 뚫고 나가서
         // 서버 보정과 매 프레임 충돌하고, 화면상 카트가 제자리에서 떨린다.
         applyWall(this.track, this.local, this.ctrl);
+
+        // 다른 카트와의 충돌도 예측에 포함해야 "부딪힌다"는 감각이 생긴다.
+        // 상대는 서버 값이 진실이므로 나만 밀려난다 (share = 1).
+        // 충돌 → 벽 → 충돌 두 번 반복 (서버와 동일). 한 번만 하면 겹침이 남는다.
+        for (let pass = 0; pass < 2; pass++) {
+          for (const o of state.karts.values() as Iterable<any>) {
+            if (o.sessionId === net.selfId || o.finished) continue;
+            const g = this.ghost[o.sessionId];
+            const ox = g ? g.x : o.x, oy = g ? g.y : o.y;
+            if (resolveBump(this.local, ox, oy, 1)) this.bumpedAt = performance.now();
+          }
+          applyWall(this.track, this.local, this.ctrl);
+        }
       }
       const gap = Math.hypot(me.x - this.local.x, me.y - this.local.y);
       if (gap > 240) this.syncLocal(me);
@@ -686,6 +709,10 @@ export class Race3D {
     this.camera.up.copy(UP);
     this.camera.lookAt(this.camLook);
 
+    // 배경을 카메라 위치로 이동 (스카이박스 방식)
+    if (this.sky) this.sky.position.copy(this.camera.position);
+    if (this.mounts) this.mounts.position.set(this.camera.position.x, 0, this.camera.position.z);
+
     // 부스트 중 시야각을 살짝 넓혀 속도감을 준다
     const targetFov = 62 + (me.boostMs > 0 ? 9 : 0) + t * 4;
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 5);
@@ -746,6 +773,11 @@ export class Race3D {
       audio.shield();
     } else if (d.type === "finish" && isMe) {
       audio.finish();
+    } else if (d.type === "bump") {
+      if (isMe || d.other === net.selfId) {
+        for (let i = 0; i < 5; i++) this.emitSpark(d.x, d.y, Math.random() * 6.3, 0xffd9a0);
+        audio.wall();
+      }
     } else if (d.type === "recover" && isMe) {
       // 스핀에서 빠져나오는 순간. 예측 좌표를 서버와 다시 맞춘다.
       this.localReady = false;

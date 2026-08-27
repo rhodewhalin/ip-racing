@@ -78,7 +78,12 @@ export function project(t: TrackData, x: number, y: number): Projection {
     }
   }
 
-  return { s: best.s, lateral: best.lateral, offTrack: Math.abs(best.lateral) > t.width / 2 };
+  // ⚠️ s 를 [0, total) 로 정규화한다.
+  //    정규화하지 않으면 결승선의 같은 지점이 s=total 과 s=0 두 값으로 나온다.
+  //    그 둘을 오갈 때마다 "결승선 통과"와 "역주행 통과"가 번갈아 인식돼
+  //    한 발짝도 안 움직였는데 랩이 오르내렸다.
+  const sNorm = ((best.s % t.total) + t.total) % t.total;
+  return { s: sNorm, lateral: best.lateral, offTrack: Math.abs(best.lateral) > t.width / 2 };
 }
 
 /**
@@ -119,7 +124,8 @@ export function projectHinted(
     return { ...full, index: idx };
   }
   return {
-    s: best.s, lateral: best.lateral,
+    s: ((best.s % t.total) + t.total) % t.total,   // [0, total) 정규화 (위 project 주석 참고)
+    lateral: best.lateral,
     offTrack: Math.abs(best.lateral) > t.width / 2,
     index: best.index,
   };
