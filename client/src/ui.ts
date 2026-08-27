@@ -350,6 +350,9 @@ export const ui = {
       this.show("waiting");
       $("startrow").classList.add("hidden");
       $("joinbox").classList.add("hidden");
+      this._shownLap = -1;
+      this._lastCount = -1;
+      this._mapT = null;
       this.lobbyMsg("새 판입니다. 준비 완료를 눌러주세요.");
     });
 

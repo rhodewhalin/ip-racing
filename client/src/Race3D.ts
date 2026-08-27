@@ -72,7 +72,13 @@ export class Race3D {
     net.on("fx", (d: any) => this.onFx(d));
     net.on("track", () => this.buildWorld());
     // 재경기: 로컬 예측·보간 상태를 새 출발선 기준으로 리셋한다
-    net.on("rematch", () => { this.localReady = false; this.ghost = {}; });
+    net.on("rematch", () => {
+      // 재경기: 카트 오브젝트를 전부 정리한다. 남겨두면 잔상이 된다.
+      for (const id of Object.keys(this.karts)) this.disposeKart(id);
+      this.ghost = {};
+      this.localReady = false;
+      this.stallMs = 0;
+    });
     // 이미 받았으면 즉시, 아니면 받을 때까지 재요청
     net.ensureTrack(() => this.buildWorld());
     // 렌더 루프에서 예외가 한 번 터지면 이후 화면이 통째로 멈춘 것처럼 보인다.
@@ -359,6 +365,22 @@ export class Race3D {
 
   // ---------- 오브젝트 ----------
 
+  /** 카트 오브젝트를 씬에서 제거하고 GPU 자원도 반납한다 */
+  private disposeKart(id: string) {
+    const g = this.karts[id];
+    if (!g) return;
+    g.traverse((o: any) => {
+      if (o.geometry) o.geometry.dispose?.();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) { m.map?.dispose?.(); m.dispose?.(); }
+      }
+    });
+    this.scene.remove(g);
+    delete this.karts[id];
+    delete this.ghost[id];
+  }
+
   private makeKart(k: any, i: number): THREE.Group {
     const g = new THREE.Group();
     const color = COLORS[i % COLORS.length];
@@ -624,6 +646,16 @@ export class Race3D {
 
   private syncKarts(state: any, dt: number) {
     const list: any[] = [...state.karts.values()];
+
+    // ⚠️ 상태에서 사라진 카트의 3D 오브젝트를 반드시 지운다.
+    //    재경기 때 봇은 삭제 후 새 ID로 다시 생성되는데, 이걸 안 지우면
+    //    이전 판의 카트가 출발선에 그대로 서 있어 "잔상"으로 보인다.
+    //    (가만히 서 있으니 "플레이를 안 하는 것처럼" 보이기도 한다)
+    const live = new Set(list.map((k) => k.sessionId));
+    for (const id of Object.keys(this.karts)) {
+      if (live.has(id)) continue;
+      this.disposeKart(id);
+    }
     list.forEach((k, i) => {
       let g = this.karts[k.sessionId];
       if (!g) g = this.karts[k.sessionId] = this.makeKart(k, i);
@@ -679,7 +711,11 @@ export class Race3D {
       if (!this.hazards[h.id]) this.hazards[h.id] = this.makeHazard(h);
     }
     for (const id of Object.keys(this.hazards)) {
-      if (!live.has(id)) { this.scene.remove(this.hazards[id]); delete this.hazards[id]; }
+      if (!live.has(id)) {
+        const m = this.hazards[id];
+        m.geometry.dispose(); (m.material as THREE.Material).dispose();
+        this.scene.remove(m); delete this.hazards[id];
+      }
     }
   }
 

@@ -113,11 +113,7 @@ export class RaceRoom extends Room<RoomState> {
     k.nickname = (options.nickname || "Player").slice(0, 12);
 
     // 출발선: 중심선 s=0 에서 좌우로 벌려 세운다
-    const idx = this.state.karts.size;
-    const lat = [-96, -32, 32, 96][idx] ?? 0;
-    // 출발선보다 살짝 앞에 세운다. 정확히 0에 두면 좌우로 벌린 카트가
-    // 출발선 뒤쪽으로 투영돼 가짜 랩이 세어진다.
-    const sp = offsetPoint(this.track, 80, lat);
+    const sp = this.gridSlot(this.state.karts.size);
     k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
 
     this.state.karts.set(client.sessionId, k);
@@ -189,8 +185,7 @@ export class RaceRoom extends Room<RoomState> {
       k.isBot = true;
       k.ready = true;
 
-      const lat = [-96, -32, 32, 96][idx] ?? 0;
-      const sp = offsetPoint(this.track, 80, lat);
+      const sp = this.gridSlot(idx);
       k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
 
       this.state.karts.set(id, k);
@@ -242,6 +237,21 @@ export class RaceRoom extends Room<RoomState> {
    * 한 줄로 깔면 **지점 수는 적게(=정신없지 않게) 유지하면서 확실히 획득**된다.
    * 한 줄에서 하나를 먹으면 나머지는 quizActive 때문에 소모되지 않는다.
    */
+  /**
+   * 출발 그리드. 2열로 세운다.
+   *
+   * ⚠️ 이전엔 좌우로 -96/-32/32/96 (간격 64)에 한 줄로 세웠는데,
+   *    충돌 판정 거리가 84라 **네 대가 서로 겹친 채 시작**했다.
+   *    매 틱 충돌 해소가 옆으로 밀어내고 벽이 되밀면서 엉켰다.
+   *    이제 좌우 간격 220, 앞뒤 간격 150 으로 어느 쌍도 겹치지 않는다.
+   */
+  private gridSlot(idx: number) {
+    const row = Math.floor(idx / 2);      // 0, 0, 1, 1
+    const col = idx % 2 === 0 ? -110 : 110;
+    const s = 200 - row * 150;            // 앞줄 200, 뒷줄 50
+    return offsetPoint(this.track, s, col);
+  }
+
   private spawnPickups() {
     const row = (kind: "item" | "block", frac: number, gi: number, lats: number[]) => {
       lats.forEach((lat, j) => {
@@ -849,12 +859,17 @@ export class RaceRoom extends Room<RoomState> {
       this.botItemAt.delete(id);
     }
     this.bots.clear();
+    this.botSeq = 0;          // 봇 이름·ID를 매 판 동일하게 (bot-1..3)
+    this.wallFx.clear();
+    this.bumpFx.clear();
+    this.botItemAt.clear();
+    this.lastAdvanceAt.clear();
+    this.lapStart.clear();
 
     // 사람 카트 초기화
     let i = 0;
     for (const k of this.state.karts.values()) {
-      const lat = [-96, -32, 32, 96][i++] ?? 0;
-      const sp = offsetPoint(this.track, 80, lat);
+      const sp = this.gridSlot(i++);
       k.x = sp.x; k.y = sp.y; k.heading = sp.angle;
       k.speed = 0; k.steer = 0; k.drifting = false; k.driftCharge = 0;
       k.driftTier = 0; k.boostTier = 0;
