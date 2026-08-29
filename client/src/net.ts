@@ -24,8 +24,8 @@ export const net = {
   _lastSent: { throttle: 0, steer: 0, drift: false } as InputState,
   lastStateAt: 0,
 
-  async create(nickname: string) {
-    this.room = await this.client.create("race", { nickname });
+  async create(nickname: string, trackId = "city") {
+    this.room = await this.client.create("race", { nickname, trackId });
     this._wire();
     await this._waitFirstState();
     return (this.room as any).roomId as string;

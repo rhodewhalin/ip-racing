@@ -71,6 +71,8 @@ export class RoomState extends Schema {
   // lobby | countdown | racing | finished
   @type("string") phase = "lobby";
   @type("string") roomCode = "";
+  @type("string") trackId = "city";
+  @type("string") trackName = "IP CITY";
   @type("number") countdown = 0;
   @type("number") laps = 3;
   @type("number") raceMs = 0;

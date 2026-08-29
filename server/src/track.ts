@@ -169,8 +169,34 @@ export const TRACK_CONTROL: number[][] = [
   [4050, 2500], [3450, 2520], [2850, 2460], [2200, 2500], [1500, 2520],
 ];
 
-/** 실제 주행 중심선. 제어점 사이를 12등분해 매끄럽게 만든 것. */
-export const TRACK_POINTS: number[][] = smoothLoop(TRACK_CONTROL, 12);
+// ---------- IP HILLS 트랙 (트랙 2) ----------
+// 자동 탐색 + 검증으로 고른 레이아웃.
+//   길이 13,061 · 최소곡률 231 (그립한계 200) · 자기근접 최소 1,138 · 봇 벽접촉 0%
+// 트랙1보다 길고 굴곡이 잦아 드리프트 활용도가 높다.
+export const TRACK2_CONTROL: number[][] = [
+  [4385, 1650], [4338, 2012], [4464, 2475], [4259, 2853], [3793, 2958],
+  [3493, 3193], [3225, 3733], [2750, 3860], [2340, 3446], [2103, 2994],
+  [1736, 2922], [1109, 2959], [823, 2578], [822, 2090], [629, 1650],
+  [614, 1162], [801, 711], [1159, 381], [1555, 152], [1897, -122],
+  [2356, -77], [2750, 7], [3122, 20], [3481, 131], [3969, 121],
+  [4264, 443], [4317, 896], [4489, 1253],
+];
+
+export interface TrackDef { id: string; name: string; desc: string; control: number[][]; points: number[][]; }
+
+export const TRACKS: TrackDef[] = [
+  { id: "city", name: "IP CITY", desc: "짧고 빠른 기본 코스",
+    control: TRACK_CONTROL, points: smoothLoop(TRACK_CONTROL, 12) },
+  { id: "hills", name: "IP HILLS", desc: "길고 굴곡이 많은 코스",
+    control: TRACK2_CONTROL, points: smoothLoop(TRACK2_CONTROL, 12) },
+];
+
+export function getTrack(id: string): TrackDef {
+  return TRACKS.find((t) => t.id === id) ?? TRACKS[0];
+}
+
+/** 기본 트랙의 중심선 (하위 호환) */
+export const TRACK_POINTS: number[][] = TRACKS[0].points;
 
 // v1은 300이었다. 최소 회전반경 248 대비 너무 좁아 코너에서 무조건 튀어나갔다.
 export const TRACK_WIDTH = 440;

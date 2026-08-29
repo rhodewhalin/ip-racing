@@ -14,7 +14,7 @@ import { RoomState, KartState, PickupState, HazardState } from "./schema";
 import { CONFIG, ItemId, QuizKind } from "./gameConfig";
 import { KART, KartInput, stepKart, driftTier, driftTierInfo, applyWall, resolveBump } from "./physics";
 import {
-  TRACK_POINTS, TRACK_WIDTH, buildTrack, project, pointAt, offsetPoint, TrackData,
+  TRACK_WIDTH, buildTrack, project, pointAt, offsetPoint, TrackData, getTrack, TRACKS,
 } from "./track";
 import { grantItem } from "./items";
 import { QuestionDispenser } from "./dispenser";
@@ -56,10 +56,17 @@ export class RaceRoom extends Room<RoomState> {
   private raceStart = 0;
   private askedLog: { sessionId: string; qId: string; correct: boolean; kind: string }[] = [];
 
-  onCreate() {
+  private trackId = "city";
+
+  onCreate(options: { trackId?: string } = {}) {
     this.setState(new RoomState());
     this.state.laps = CONFIG.laps;
-    this.track = buildTrack(TRACK_POINTS, TRACK_WIDTH);
+    // 방을 만들 때 코스를 고를 수 있다
+    const def = getTrack(options?.trackId ?? "city");
+    this.trackId = def.id;
+    this.state.trackId = def.id;
+    this.state.trackName = def.name;
+    this.track = buildTrack(def.points, TRACK_WIDTH);
 
     const code = makeRoomCode();
     this.state.roomCode = code;
@@ -87,7 +94,7 @@ export class RaceRoom extends Room<RoomState> {
     //    도착하면 그대로 버려진다. 그러면 3D 월드가 만들어지지 않아 화면이
     //    카운트다운에서 멈춘 것처럼 보인다. 클라이언트가 다시 달라고 할 수 있게 한다.
     this.onMessage("request_track", (client) => {
-      client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
+      client.send("track", { points: getTrack(this.trackId).points, width: TRACK_WIDTH, laps: CONFIG.laps, name: getTrack(this.trackId).name });
     });
 
     this.onMessage("use_item", (client) => this.useItem(client.sessionId));
@@ -127,7 +134,7 @@ export class RaceRoom extends Room<RoomState> {
     this.lastAdvanceAt.set(client.sessionId, Date.now());
 
     // 트랙 지오메트리는 상태가 아니라 1회성 데이터 — 접속 시 한 번만 보낸다
-    client.send("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
+    client.send("track", { points: getTrack(this.trackId).points, width: TRACK_WIDTH, laps: CONFIG.laps, name: getTrack(this.trackId).name });
   }
 
   onLeave(client: Client) {
@@ -157,7 +164,7 @@ export class RaceRoom extends Room<RoomState> {
     this.state.phase = "countdown";
     this.lock();
     // 안전망: 카운트다운 시점에 한 번 더 보낸다
-    this.broadcast("track", { points: TRACK_POINTS, width: TRACK_WIDTH, laps: CONFIG.laps });
+    this.broadcast("track", { points: getTrack(this.trackId).points, width: TRACK_WIDTH, laps: CONFIG.laps, name: getTrack(this.trackId).name });
     this.fillWithBots();
     this.state.countdown = Math.ceil(CONFIG.countdownMs / 1000);
     const iv = this.clock.setInterval(() => {

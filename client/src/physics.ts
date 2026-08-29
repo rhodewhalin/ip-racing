@@ -48,10 +48,17 @@ export const KART = {
 
   // 기본 그립으로는 최소 회전반경 560/2.4 ≈ 233.
   // 이보다 조인 코너는 감속하거나 드리프트해야 한다 — 이게 실력 표현의 여지다.
-  turnRate: 2.4,
+  turnRate: 2.6,  // 상한이 생겼으므로 저속 응답을 유지하려 소폭 상향
   lowSpeedTurn: 0.5,   // 저속에서도 이 비율만큼은 돈다
-  steerRampUp: 7.0,    // 초당 조향 증가율 (1.0까지 약 0.14초)
-  steerRampDown: 12.0, // 키를 놓았을 때 중앙 복귀
+  steerRampUp: 5.2,    // 초당 조향 증가율 (약 0.19초). 급격한 꺾임을 완화.
+  steerRampDown: 11.0, // 키를 놓았을 때 중앙 복귀
+
+  // ⚠️ 고속에서 조향량 상한.
+  //    최고속에서 최대조향을 걸면 1초에 138° 꺾여, 폭 440 트랙에서는 과민했다.
+  //    ("방향키가 매끄럽지 않다 / 동체시력이 필요하다" 피드백)
+  //    속도가 붙을수록 최대 조향량을 줄여 자연스러운 아크를 그리게 한다.
+  //    드리프트 중에는 적용하지 않는다 — 일부러 꺾는 동작이니까.
+  steerCapAtTop: 0.62, // 최고속에서 조향 입력의 62%까지만 반영
 
   // 드리프트 중 선회반경 560/(2.4×2.1) ≈ 111. 그립 한계를 확실히 넘어선다.
   // 1.55였을 때는 드리프트 이득이 1.3%에 그쳐 사실상 무의미했다.
@@ -132,8 +139,11 @@ export function stepKart(b: KartBody, input: KartInput, dt: number, ctx: StepCon
   if (ctx.offTrack && b.speed > topSpeed) b.speed -= KART.offTrackDrag * dt;
   b.speed = clamp(b.speed, -KART.reverseSpeed, Math.max(topSpeed, 0));
 
-  // 조향 램프
-  b.steerActual = rampSteer(b.steerActual, clamp(input.steer, -1, 1), dt);
+  // 조향 램프 + 고속 상한
+  const speedRatio = clamp(Math.abs(b.speed) / KART.maxSpeed, 0, 1);
+  const cap = 1 - (1 - KART.steerCapAtTop) * speedRatio;
+  const wanted = clamp(input.steer, -1, 1) * (input.drift ? 1 : cap);
+  b.steerActual = rampSteer(b.steerActual, wanted, dt);
 
   const fast = Math.abs(b.speed) > KART.driftMinSpeed;
   const turning = Math.abs(b.steerActual) > KART.driftSteerEnter;

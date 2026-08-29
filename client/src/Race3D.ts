@@ -18,7 +18,7 @@ import { buildTrack, project, pointAt, TrackData } from "./track";
 import { audio } from "./audio";
 import {
   asphaltTexture, grassTexture, curbTexture, barrierTexture, checkerTexture,
-  skyDome, mountains, tree, grandstand,
+  skyDome, mountains, grandstand,
 } from "./scenery";
 
 const COLORS = [0x4da3ff, 0xff9f43, 0x37d67a, 0xc77dff];
@@ -312,24 +312,42 @@ export class Race3D {
       }
     }
 
-    // 나무
-    const treeProto = tree();
-    for (let s = 0; s < this.track.total; s += 320) {
+    // 나무 — InstancedMesh 로 묶는다.
+    // 개별 Group 으로 두면 나무 하나당 드로우콜 4개가 들어가 프레임이 떨어진다.
+    // ("버벅거린다" 피드백) 기둥/잎 3단을 각각 하나의 인스턴스 메시로 처리한다.
+    const spots: { x: number; y: number; sc: number; rot: number }[] = [];
+    for (let s = 0; s < this.track.total; s += 300) {
       for (const side of [-1, 1]) {
-        if (Math.random() > 0.5) continue;
+        if (Math.random() > 0.55) continue;
         const p = pointAt(this.track, s + Math.random() * 140);
-        const off = (halfW + 190 + Math.random() * 520) * side;
+        const off = (halfW + 190 + Math.random() * 560) * side;
         const x = p.x - Math.sin(p.angle) * off;
         const y = p.y + Math.cos(p.angle) * off;
         if (!fits(x, y, 90, 110)) continue;
-
-        const t = treeProto.clone();
-        t.position.set(x, 0, y);
         const sc = 0.75 + Math.random() * 0.8;
-        t.scale.set(sc, sc, sc);
-        t.rotation.y = Math.random() * 6.28;
-        this.scene.add(t);
+        spots.push({ x, y, sc, rot: Math.random() * 6.28 });
         placed.push({ x, y, r: 90 * sc });
+      }
+    }
+
+    if (spots.length) {
+      const parts: [THREE.BufferGeometry, THREE.Material, number][] = [
+        [new THREE.CylinderGeometry(9, 12, 70, 6), new THREE.MeshLambertMaterial({ color: 0x4a3521 }), 35],
+        [new THREE.ConeGeometry(58, 78, 7), new THREE.MeshLambertMaterial({ color: 0x2f6b3a }), 92],
+        [new THREE.ConeGeometry(45, 78, 7), new THREE.MeshLambertMaterial({ color: 0x275b32 }), 136],
+        [new THREE.ConeGeometry(32, 78, 7), new THREE.MeshLambertMaterial({ color: 0x377a44 }), 180],
+      ];
+      const dummy = new THREE.Object3D();
+      for (const [geo, mat, yy] of parts) {
+        const inst = new THREE.InstancedMesh(geo, mat, spots.length);
+        spots.forEach((sp, i) => {
+          dummy.position.set(sp.x, yy * sp.sc, sp.y);
+          dummy.scale.setScalar(sp.sc);
+          dummy.rotation.set(0, sp.rot, 0);
+          dummy.updateMatrix();
+          inst.setMatrixAt(i, dummy.matrix);
+        });
+        this.scene.add(inst);
       }
     }
 

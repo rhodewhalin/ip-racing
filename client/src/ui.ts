@@ -25,16 +25,26 @@ export const ui = {
   _quizTimer: 0 as any,
   _lastCount: -1 as number,
   _shownLap: -1 as number,
+  _trackId: "city",
+  _helpShown: false,
 
   // ---------- 로비 ----------
   initLobby(onStart: () => void) {
     const nick = $("nick") as HTMLInputElement;
     const code = $("code") as HTMLInputElement;
 
+    document.querySelectorAll("#trackpick .trk").forEach((b) => {
+      b.addEventListener("click", () => {
+        this._trackId = (b as HTMLElement).dataset.track || "city";
+        document.querySelectorAll("#trackpick .trk").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+      });
+    });
+
     $("btnCreate").addEventListener("click", async () => {
       if (!nick.value.trim()) return this.lobbyMsg("닉네임을 입력하세요.");
       try {
-        await net.create(nick.value.trim());
+        await net.create(nick.value.trim(), this._trackId);
         this.enterWaiting();
         this.attachRoomState();
       } catch { this.lobbyMsg("방 생성 실패: 서버가 켜져 있나요?"); }
@@ -128,6 +138,15 @@ export const ui = {
       $("roomcode").textContent = s.roomCode || "…";
       this.renderPlayerList(s);
       if (s.phase !== "lobby") { this.hide("lobby"); this._onStart(); }
+      // 레이스 시작 직후 조작 안내를 잠깐 띄운다 (10초 뒤 사라짐)
+      if (s.phase === "racing" && !this._helpShown) {
+        this._helpShown = true;
+        this.show("ingameHelp");
+        setTimeout(() => $("ingameHelp").classList.add("fade"), 9000);
+        setTimeout(() => this.hide("ingameHelp"), 9800);
+      }
+      if ($("tracklabel")) $("tracklabel").textContent = s.trackName || "";
+
       if (s.phase === "countdown") {
         this.show("countdown");
         $("countnum").textContent = String(s.countdown || "GO!");
@@ -167,6 +186,15 @@ export const ui = {
     $("hudRank").textContent = `${me.rank} / ${s.karts.size}`;
     $("hudLap").textContent = `${Math.min(me.lap + 1, s.laps)} / ${s.laps}`;
     $("hudItem").textContent = ITEM_LABEL[me.item] ?? "—";
+
+    // 아이템 슬롯 — "쓸 시간이 없다"는 피드백. 크게 띄우고 키를 명시한다.
+    this.show("itemslot");
+    const slot = $("itemslot");
+    const has = !!me.item;
+    slot.classList.toggle("has", has);
+    $("itemicon").textContent = has ? (ITEM_LABEL[me.item] ?? "").split(" ")[0] : "—";
+    $("itemname").textContent = has ? (ITEM_LABEL[me.item] ?? "").split(" ")[1] ?? "" : "아이템 없음";
+    $("itemkey").textContent = has ? "SPACE 로 사용" : "SPACE";
     $("hudSpeed").textContent = String(Math.round(Math.abs(me.speed)));
     $("hudItem").classList.toggle("ready", !!me.item);
 
@@ -371,6 +399,7 @@ export const ui = {
     this.hide("standings");
     this.hide("minimap");
     this.hide("lapbanner");
+    this.hide("itemslot");
     this.show("result");
 
     $("scores").innerHTML = data.results
