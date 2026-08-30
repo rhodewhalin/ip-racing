@@ -5,7 +5,39 @@
 
 import { Client, Room } from "colyseus.js";
 
-const ENDPOINT = (import.meta as any).env?.VITE_SERVER_URL || `ws://${location.hostname}:2567`;
+// ------------------------------------------------------------
+// Colyseus 엔드포인트 결정
+// ------------------------------------------------------------
+// Colyseus.js 0.15의 Client(endpoint)는 endpoint의 pathname을 그대로 보존해서
+// matchmake HTTP( `${pathname}/matchmake/...` )와 방 ws( `${pathname}/{processId}/{roomId}` )
+// 두 URL 앞에 모두 붙인다. 즉 하위경로 base를 그대로 지원한다.
+// (server가 publicAddress를 설정하지 않는 한 — 우리 서버는 설정하지 않음.)
+//
+// 우선순위:
+//  1) VITE_SERVER_URL 이 있으면 그대로 사용 (기존 Railway/Render 배포 호환).
+//  2) 하위경로 배포(BASE_URL이 "/"가 아님, 예: "/games/ip-racing/"):
+//     same-origin으로 리버스 프록시 뒤의 Colyseus에 붙는다 →
+//     `${wsproto}//${location.host}${BASE_URL 끝슬래시 제거}`.
+//     허브가 이 하위경로 프리픽스를 그대로 upstream(nginx)으로 넘기고,
+//     nginx→server로 넘기기 전 허브가 프리픽스를 스트립하므로 Colyseus 서버는 루트 경로로 받는다.
+//  3) 그 외(standalone / 로컬 dev, BASE_URL === "/"): 서버는 자체 포트(2567)에서 뜬다.
+function resolveEndpoint(): string {
+  const env = (import.meta as any).env || {};
+  if (env.VITE_SERVER_URL) return env.VITE_SERVER_URL as string;
+
+  const base: string = env.BASE_URL || "/";
+  const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+
+  // 하위경로 배포: 같은 오리진 + base 경로로 Colyseus에 붙는다.
+  if (base !== "/" && base !== "") {
+    return `${wsProto}//${location.host}${base.replace(/\/+$/, "")}`;
+  }
+
+  // standalone / 로컬 dev: Colyseus는 별도 포트에서 동작.
+  return `${wsProto}//${location.hostname}:2567`;
+}
+
+const ENDPOINT = resolveEndpoint();
 
 export type Phase = "lobby" | "countdown" | "racing" | "finished";
 

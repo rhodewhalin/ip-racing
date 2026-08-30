@@ -2,12 +2,15 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=1280, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>IP Racing — 3D</title>
     <style>
       :root { --bg:#0b1220; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --warn:#ffb020; }
       * { box-sizing:border-box; font-family:system-ui,"Apple SD Gothic Neo",sans-serif; }
       html, body { margin:0; height:100%; background:#070c16; color:var(--fg); overflow:hidden; }
+      /* 모바일: 스크롤·핀치줌·당겨서새로고침 방지 + 텍스트 선택 방지 */
+      body.touch { touch-action:none; overscroll-behavior:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+      body.touch #game, body.touch #game canvas { touch-action:none; }
       /* 화면 전체를 채운다. 고정 1280x720 이었던 것을 뷰포트 기준으로 바꿈. */
       #app { width:100vw; height:100vh; position:relative; }
       #game { width:100%; height:100%; }
@@ -143,6 +146,72 @@
       .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; background:#25324c; }
       .badge.ok { background:rgba(55,214,122,.16); color:var(--good); }
       .badge.no { background:rgba(255,93,108,.16); color:var(--bad); }
+
+      /* ============ 모바일 터치 컨트롤 ============ */
+      /* 오버레이는 이벤트를 통과시키고, 버튼만 이벤트를 받는다. 터치 기기에서만 표시. */
+      #touchctrl { position:absolute; inset:0; z-index:6; pointer-events:none; display:none; }
+      body.touch #touchctrl:not(.hidden) { display:block; }
+      #touchctrl > * { pointer-events:auto; }
+
+      /* 좌하단 조향 조이스틱 (가로축 = 조향) */
+      #joyBase { position:absolute;
+                 left:calc(26px + env(safe-area-inset-left)); bottom:calc(26px + env(safe-area-inset-bottom));
+                 width:132px; height:132px; border-radius:50%;
+                 background:rgba(10,16,32,.5); border:2px solid var(--line);
+                 box-shadow:0 6px 24px rgba(0,0,0,.4); touch-action:none; }
+      #joyStick { position:absolute; left:50%; top:50%; width:58px; height:58px; margin:-29px 0 0 -29px;
+                  border-radius:50%; background:radial-gradient(circle at 35% 30%, #6fb6ff, var(--accent));
+                  border:2px solid rgba(255,255,255,.55); box-shadow:0 4px 14px rgba(0,0,0,.4); }
+      #joyHint { position:absolute; left:0; right:0; bottom:-20px; text-align:center;
+                 font-size:11px; color:#8ea3c8; letter-spacing:1px; }
+
+      /* 우하단 액션 버튼 */
+      #padRight { position:absolute;
+                  right:calc(18px + env(safe-area-inset-right)); bottom:calc(22px + env(safe-area-inset-bottom));
+                  display:grid; grid-template-columns:auto auto; grid-template-rows:auto auto;
+                  gap:12px; align-items:end; touch-action:none; }
+      .tbtn { -webkit-appearance:none; appearance:none; border:2px solid var(--line);
+              background:rgba(10,16,32,.62); color:var(--fg); font-weight:800; letter-spacing:.04em;
+              border-radius:16px; padding:0; touch-action:none; user-select:none; -webkit-user-select:none;
+              display:flex; flex-direction:column; align-items:center; justify-content:center;
+              backdrop-filter:blur(6px); box-shadow:0 4px 16px rgba(0,0,0,.35); }
+      .tbtn small { font-size:11px; font-weight:600; color:#c8d6f0; margin-top:2px; }
+      .tbtn.active { filter:brightness(1.25); transform:scale(.96); }
+      /* 가속: 크게, 우측 세로 열 */
+      #tGas   { grid-column:2; grid-row:1; width:96px; height:96px; font-size:30px;
+                background:rgba(55,214,122,.30); border-color:var(--good); color:#eafff2; }
+      #tBrake { grid-column:2; grid-row:2; width:96px; height:64px; font-size:22px;
+                background:rgba(255,93,108,.26); border-color:var(--bad); }
+      /* 드리프트/아이템: 좌측 열 */
+      #tDrift { grid-column:1; grid-row:1; width:82px; height:74px; font-size:14px; }
+      #tItem  { grid-column:1; grid-row:2; width:82px; height:74px; font-size:14px;
+                border-color:var(--accent); color:#dcecff; }
+      #tItem.has { background:rgba(255,176,32,.30); border-color:var(--warn);
+                   box-shadow:0 0 20px rgba(255,176,32,.45); color:#fff; }
+
+      /* 세로 화면 회전 안내 (터치 기기 한정) */
+      #rotate { position:absolute; inset:0; z-index:80; display:none;
+                background:rgba(6,10,20,.96); align-items:center; justify-content:center;
+                text-align:center; padding:24px; }
+      #rotate .msg { font-size:20px; font-weight:800; color:var(--accent); letter-spacing:.03em; line-height:1.6; }
+      body.touch #rotate { display:flex; }
+      @media (orientation:landscape) { body.touch #rotate { display:none; } }
+
+      /* 좁고 낮은 가로 화면: HUD·미니맵·퀴즈·안내를 압축해 조작을 가리지 않는다 */
+      @media (max-height:520px), ((max-width:960px) and (pointer:coarse)) {
+        #hud { padding:8px 12px; gap:12px; }
+        #standings { left:12px; top:76px; font-size:11px; min-width:150px; padding:6px 9px; }
+        #minimap { right:12px; top:12px; width:168px; height:112px; }
+        #lapbanner { right:12px; top:140px; }
+        #btnMute { right:12px; bottom:auto; top:12px; padding:6px 9px; font-size:15px; }
+        #btnFull { right:60px; bottom:auto; top:12px; padding:6px 9px; font-size:15px; }
+        /* 퀴즈는 조이스틱 위쪽 좌측에 — 우하단 버튼과 겹치지 않게 */
+        .quiz-card { left:12px; right:auto; bottom:170px; width:min(64vw,360px); padding:10px 12px; }
+        #qtext { font-size:14px; }
+        #ingameHelp { display:none; }
+        #itemslot { display:none; }
+        .card { width:min(94vw,440px); padding:20px 20px; }
+      }
     </style>
   </head>
   <body>
@@ -237,6 +306,20 @@
           </div>
         </div>
       </div>
+
+      <!-- 모바일 터치 컨트롤 (터치 기기에서만 표시 · 레이스 중에만 노출) -->
+      <div id="touchctrl" class="hidden">
+        <div id="joyBase"><div id="joyStick"></div><div id="joyHint">조향</div></div>
+        <div id="padRight">
+          <button id="tGas" class="tbtn">▲<small>가속</small></button>
+          <button id="tBrake" class="tbtn">▼<small>브레이크</small></button>
+          <button id="tDrift" class="tbtn">DRIFT<small>드리프트</small></button>
+          <button id="tItem" class="tbtn">아이템<small>사용</small></button>
+        </div>
+      </div>
+
+      <!-- 세로 화면 회전 안내 -->
+      <div id="rotate"><div class="msg">📱 기기를 가로로<br>돌려주세요</div></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

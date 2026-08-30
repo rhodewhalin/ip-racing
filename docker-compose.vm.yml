@@ -1,0 +1,56 @@
+# IP RACING — standalone VM deployment for the KIPlay hub.
+#
+# Joins the hub's external network so the hub can reverse-proxy
+# /games/ip-racing/ to the client container (alias ip-racing-client:8080).
+# Neither service publishes a host port — all ingress is via the hub.
+#
+#   docker compose -f docker-compose.vm.yml up -d --build
+#
+# Requires the hub network to already exist (created by the hub compose project):
+#   docker network ls | grep hub_kiplay
+#
+# Hub registration (hub/games.json):
+#   { "id": "ip-racing", "entryType": "route",
+#     "entry": { "url": "/games/ip-racing/", "upstream": "http://ip-racing-client:8080", "ws": true } }
+# No wsPath: room ws paths are dynamic (/<processId>/<roomId>), so the game relies
+# on the hub's prefixed ws route (ws:true) which strips /games/ip-racing and
+# forwards the remainder to the client nginx, which splits ws vs static.
+
+services:
+  # Authoritative Colyseus server. Internal only (hubnet); no host port.
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      PORT: "2567"
+    networks:
+      - default
+      - hubnet
+    restart: unless-stopped
+
+  # Static client + reverse proxy to `server`. The hub proxies to it as
+  # ip-racing-client:8080 over hubnet.
+  client:
+    build:
+      context: .
+      dockerfile: deploy/client.Dockerfile
+      args:
+        VITE_BASE_PATH: /games/ip-racing/
+        # VITE_SERVER_URL intentionally empty -> same-origin (wss://<host>/games/ip-racing).
+    depends_on:
+      - server
+    networks:
+      default: {}
+      hubnet:
+        aliases:
+          - ip-racing-client
+    restart: unless-stopped
+
+networks:
+  # Internal network for client <-> server (Colyseus proxy target `server:2567`).
+  default: {}
+  # Shared hub network — the hub reverse-proxies /games/ip-racing/ over this.
+  hubnet:
+    external: true
+    name: hub_kiplay

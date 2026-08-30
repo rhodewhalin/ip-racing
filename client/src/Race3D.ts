@@ -46,6 +46,12 @@ export class Race3D {
   private ctrl: InputState = { throttle: 0, steer: 0, drift: false };
   private keys: Record<string, boolean> = {};
 
+  // 모바일 터치 입력 — 키보드와 동일한 액션에 매핑되며 병합된다.
+  private isTouch =
+    (typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches) ||
+    (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
+  private touch = { steer: 0, gas: false, brake: false, drift: false };
+
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
   private sparks: THREE.Mesh[] = [];
@@ -69,6 +75,7 @@ export class Race3D {
     this.running = true;
     this.initThree();
     this.bindInput();
+    this.bindTouch();
     net.on("fx", (d: any) => this.onFx(d));
     net.on("track", () => this.buildWorld());
     // 재경기: 로컬 예측·보간 상태를 새 출발선 기준으로 리셋한다
@@ -151,6 +158,9 @@ export class Race3D {
     }
 
     addEventListener("resize", () => this.resize());
+    // 모바일: 방향 전환·iOS 사파리 주소창 접힘에 캔버스를 다시 맞춘다
+    addEventListener("orientationchange", () => setTimeout(() => this.resize(), 250));
+    visualViewport?.addEventListener("resize", () => this.resize());
   }
 
   private resize() {
@@ -169,6 +179,64 @@ export class Race3D {
     });
     addEventListener("keyup", (e) => { this.keys[e.code] = false; });
     addEventListener("blur", () => { this.keys = {}; });
+  }
+
+  /**
+   * 모바일 터치 컨트롤. 데스크톱(키보드)에는 손대지 않는 추가 레이어다.
+   *   좌하단 조이스틱(가로축) = 조향, 우하단 버튼 = 가속/브레이크/드리프트/아이템.
+   * 각 입력은 this.touch 에 모이고 readInput() 에서 키보드와 병합된다.
+   */
+  private bindTouch() {
+    if (!this.isTouch) return;
+    document.body.classList.add("touch");
+
+    const base = document.getElementById("joyBase");
+    const stick = document.getElementById("joyStick");
+    if (base && stick) {
+      const MAX = 42, DEAD = 8;
+      let joyId = -1;
+      base.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        if (joyId !== -1) return;
+        joyId = e.pointerId;
+        try { base.setPointerCapture(e.pointerId); } catch {}
+      });
+      base.addEventListener("pointermove", (e) => {
+        if (e.pointerId !== joyId) return;
+        e.preventDefault();
+        const r = base.getBoundingClientRect();
+        let dx = e.clientX - (r.left + r.width / 2);
+        if (dx > MAX) dx = MAX; else if (dx < -MAX) dx = -MAX;
+        stick.style.transform = `translateX(${dx}px)`;
+        this.touch.steer = Math.abs(dx) < DEAD ? 0 : Math.sign(dx);
+      });
+      const joyEnd = (e: PointerEvent) => {
+        if (e.pointerId !== joyId) return;
+        joyId = -1;
+        this.touch.steer = 0;
+        stick.style.transform = "translateX(0px)";
+      };
+      base.addEventListener("pointerup", joyEnd);
+      base.addEventListener("pointercancel", joyEnd);
+    }
+
+    // 누르는 동안 유지되는 버튼 (가속/브레이크/드리프트)
+    const hold = (id: string, on: () => void, off: () => void) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("pointerdown", (e) => { e.preventDefault(); el.classList.add("active"); on(); });
+      const end = (e?: Event) => { e?.preventDefault(); el.classList.remove("active"); off(); };
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+      el.addEventListener("pointerleave", end);
+    };
+    hold("tGas", () => { this.touch.gas = true; }, () => { this.touch.gas = false; });
+    hold("tBrake", () => { this.touch.brake = true; }, () => { this.touch.brake = false; });
+    hold("tDrift", () => { this.touch.drift = true; }, () => { this.touch.drift = false; });
+
+    // 아이템은 탭 = 즉시 사용 (Space 와 동일)
+    const item = document.getElementById("tItem");
+    item?.addEventListener("pointerdown", (e) => { e.preventDefault(); net.useItem(); });
   }
 
   // ---------- 월드 구성 ----------
@@ -649,9 +717,15 @@ export class Race3D {
 
   private readInput() {
     const k = this.keys;
-    this.ctrl.throttle = k["ArrowUp"] ? 1 : k["ArrowDown"] ? -1 : 0;
-    this.ctrl.steer = k["ArrowLeft"] ? -1 : k["ArrowRight"] ? 1 : 0;
-    this.ctrl.drift = !!(k["ShiftLeft"] || k["ShiftRight"]);
+    // 키보드 입력 (데스크톱) — 기존 동작 그대로
+    const kThrottle = k["ArrowUp"] ? 1 : k["ArrowDown"] ? -1 : 0;
+    const kSteer = k["ArrowLeft"] ? -1 : k["ArrowRight"] ? 1 : 0;
+    const kDrift = !!(k["ShiftLeft"] || k["ShiftRight"]);
+    // 터치 입력을 병합 (키보드가 눌려 있으면 키보드 우선)
+    const tThrottle = this.touch.gas ? 1 : this.touch.brake ? -1 : 0;
+    this.ctrl.throttle = kThrottle || tThrottle;
+    this.ctrl.steer = kSteer || this.touch.steer;
+    this.ctrl.drift = kDrift || this.touch.drift;
     net.sendInput(this.ctrl);
   }
 

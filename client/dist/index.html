@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>IP Racing — 3D</title>
+    <style>
+      :root { --bg:#0b1220; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --warn:#ffb020; }
+      * { box-sizing:border-box; font-family:system-ui,"Apple SD Gothic Neo",sans-serif; }
+      html, body { margin:0; height:100%; background:#070c16; color:var(--fg); overflow:hidden; }
+      /* 모바일: 스크롤·핀치줌·당겨서새로고침 방지 + 텍스트 선택 방지 */
+      body.touch { touch-action:none; overscroll-behavior:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+      body.touch #game, body.touch #game canvas { touch-action:none; }
+      /* 화면 전체를 채운다. 고정 1280x720 이었던 것을 뷰포트 기준으로 바꿈. */
+      #app { width:100vw; height:100vh; position:relative; }
+      #game { width:100%; height:100%; }
+      .hidden { display:none !important; }
+
+      .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(7,12,22,.86); }
+      .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:28px 32px; width:540px; }
+      h1 { margin:0 0 4px; font-size:28px; letter-spacing:1px; }
+      .sub { color:#9fb0d0; margin:0 0 18px; font-size:13px; }
+      input { width:100%; padding:11px 12px; margin:6px 0 12px; border-radius:9px; border:1px solid var(--line); background:#0f1830; color:var(--fg); font-size:15px; }
+      button { padding:11px 16px; border:0; border-radius:9px; background:var(--accent); color:#04122b; font-weight:700; cursor:pointer; font-size:15px; }
+      button.ghost { background:#25324c; color:var(--fg); }
+      .row { display:flex; gap:10px; }
+      .row button { flex:1; }
+      .prow { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed var(--line); font-size:14px; }
+
+      /* HUD */
+      #hud { position:absolute; left:0; right:0; top:0; padding:16px 24px; display:flex; gap:clamp(14px,2.2vw,34px);
+             pointer-events:none; text-shadow:0 2px 6px rgba(0,0,0,.8); }
+      #hud .cell { display:flex; flex-direction:column; }
+      #hud .k { font-size:11px; color:#8ea3c8; letter-spacing:1px; }
+      #hud .v { font-size:26px; font-weight:800; }
+      #hudItem.ready { color:var(--warn); }
+      #hudDrift.t1 { color:#66c2ff; } #hudDrift.t2 { color:#ff8a3d; } #hudDrift.t3 { color:#ff4d6d; }
+      #hud .v { font-size:clamp(18px,1.9vw,30px); }
+      #hud .k { font-size:clamp(9px,0.8vw,12px); }
+      #standings { position:absolute; left:24px; top:clamp(84px,10vh,130px); pointer-events:none;
+                   background:rgba(10,16,32,.72); border:1px solid var(--line);
+                   border-radius:10px; padding:8px 12px; font-size:13px; min-width:190px; }
+      #standings .srow { display:flex; justify-content:space-between; gap:16px; padding:4px 0; }
+      #standings .srow + .srow { border-top:1px solid rgba(255,255,255,.06); }
+      #standings .me { color:var(--accent); font-weight:800; }
+      #standings .bot { color:#8ea3c8; }
+      /* 키캡 UI — "키보드 키 모양으로 보여달라"는 피드백 반영 */
+      .trk { background:#25324c; color:var(--fg); font-size:14px; line-height:1.35; padding:10px 8px; }
+      .trk small { color:#8ea3c8; font-size:11px; font-weight:500; }
+      .trk.on { background:var(--accent); color:#04122b; }
+      .trk.on small { color:#0a2b52; }
+      .kbd { display:inline-flex; align-items:center; justify-content:center;
+             min-width:34px; height:34px; padding:0 8px; margin:0 2px;
+             background:linear-gradient(#2e3a56,#1c2438); color:#eaf1ff;
+             border:1px solid #46557a; border-bottom-width:3px; border-radius:7px;
+             font-size:14px; font-weight:800; box-shadow:0 2px 0 rgba(0,0,0,.35); }
+      .kbd.wide { min-width:78px; font-size:12px; }
+      .ctrls { display:grid; grid-template-columns:auto 1fr; gap:8px 14px; align-items:center;
+               background:#131c30; border:1px solid var(--line); border-radius:12px;
+               padding:14px 16px; margin:14px 0 4px; }
+      .ctrls .what { font-size:13px; color:#c8d6f0; }
+      .ctrls .keys { white-space:nowrap; }
+      .ctrls h4 { grid-column:1/3; margin:0 0 2px; font-size:12px; letter-spacing:2px; color:#8ea3c8; }
+
+      /* 레이스 시작 직후 잠깐 보여주는 조작 안내 */
+      #ingameHelp { position:absolute; left:50%; bottom:26px; transform:translateX(-50%);
+                    background:rgba(8,13,26,.9); border:1px solid var(--line);
+                    border-radius:12px; padding:10px 16px; display:flex; gap:16px;
+                    align-items:center; pointer-events:none; transition:opacity .5s; }
+      #ingameHelp .item { display:flex; align-items:center; gap:6px; font-size:12px; color:#c8d6f0; }
+      #ingameHelp.fade { opacity:0; }
+
+      /* 아이템 슬롯 — "아이템 쓸 시간이 없다"는 피드백: 크게, 눈에 띄게 */
+      #itemslot { position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
+                  width:132px; text-align:center; background:rgba(10,16,32,.82);
+                  border:2px solid var(--line); border-radius:14px; padding:8px 6px 6px;
+                  pointer-events:none; }
+      #itemslot.has { border-color:var(--warn); box-shadow:0 0 22px rgba(255,176,32,.45); }
+      #itemicon { font-size:36px; line-height:1.1; }
+      #itemname { font-size:12px; color:#c8d6f0; margin-top:2px; }
+      #itemkey { font-size:11px; color:#8ea3c8; margin-top:4px; }
+      #itemslot.has #itemkey { color:var(--warn); font-weight:800; }
+      @keyframes itemPulse { 0%,100%{transform:translateX(-50%) scale(1);} 50%{transform:translateX(-50%) scale(1.07);} }
+      #itemslot.has { animation:itemPulse 1s ease-in-out infinite; }
+
+      #btnFull { position:absolute; right:78px; bottom:24px; background:rgba(10,16,32,.8);
+                 color:var(--fg); border:1px solid var(--line); padding:8px 12px;
+                 font-size:18px; border-radius:10px; }
+      #btnMute { position:absolute; right:24px; bottom:24px; background:rgba(10,16,32,.8);
+                 color:var(--fg); border:1px solid var(--line); padding:8px 12px;
+                 font-size:18px; border-radius:10px; }
+      #spinbanner { position:absolute; left:50%; top:22%; transform:translateX(-50%);
+                    background:rgba(255,93,108,.92); color:#fff; font-weight:800;
+                    padding:10px 20px; border-radius:12px; font-size:clamp(14px,1.5vw,20px);
+                    pointer-events:none; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+      #diag { position:absolute; left:24px; bottom:24px; background:rgba(6,10,20,.9);
+              border:1px solid var(--line); border-radius:10px; padding:10px 14px;
+              font-family:ui-monospace, monospace; font-size:12px; line-height:1.6;
+              color:#cfe0ff; pointer-events:none; max-width:340px; }
+      /* 랩 표시: 미니맵 아래, 오른쪽에 크게 */
+      #lapbanner { position:absolute; right:24px; top:200px; text-align:right;
+                   pointer-events:none; text-shadow:0 3px 12px rgba(0,0,0,.85);
+                   transition:transform .18s, opacity .18s; }
+      #laptop { font-size:13px; letter-spacing:3px; color:#8ea3c8; font-weight:700; }
+      #lapnum { font-size:clamp(38px,4.4vw,64px); font-weight:900; line-height:1; color:#fff; }
+      #laptime { font-size:14px; color:#9fb0d0; margin-top:2px; }
+      #lapbanner.pop { transform:scale(1.35); }
+      #lapbanner.final #lapnum { color:#ffd166; }
+      #minimap { position:absolute; right:24px; top:24px; background:rgba(10,16,32,.72);
+                 border:1px solid var(--line); border-radius:10px; pointer-events:none; }
+      #game { width:100%; height:100%; overflow:hidden; }
+      #game canvas { display:block; width:100% !important; height:100% !important; }
+      #hud.offtrack::after { content:"코스 이탈"; position:absolute; right:22px; top:18px;
+             color:var(--warn); font-weight:800; font-size:18px; }
+
+      /* 카운트다운 */
+      #countdown { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+      #countnum { font-size:clamp(90px,14vw,190px); font-weight:900; color:#fff; text-shadow:0 6px 30px rgba(77,163,255,.9); }
+
+      /* 퀴즈 — 우하단 카드. 레이스를 가리지 않는다. */
+      .quiz-card { position:absolute; right:24px; bottom:88px; width:clamp(360px,30vw,520px);
+                   background:rgba(16,24,44,.96); border:2px solid var(--line);
+                   border-radius:14px; padding:14px 16px; }
+      .quiz-card.escape { border-color:var(--bad); }
+      .quiz-card.block  { border-color:var(--warn); }
+      .quiz-card.item   { border-color:var(--accent); }
+      .quiz-card.ok { border-color:var(--good); }
+      .quiz-card.no { border-color:var(--bad); }
+      #qkind { font-size:12px; color:#8ea3c8; font-weight:700; letter-spacing:1px; }
+      #qtext { font-size:17px; font-weight:700; margin:6px 0 10px; line-height:1.35; }
+      #qopts { display:flex; flex-direction:column; gap:6px; }
+      .qopt { text-align:left; background:#25324c; color:var(--fg); font-weight:600; padding:9px 12px; }
+      .qopt b { color:var(--accent); margin-right:8px; }
+      .qopt.picked { background:var(--accent); color:#04122b; }
+      .qopt:disabled { opacity:.55; cursor:default; }
+      #qhint { font-size:11px; color:#8ea3c8; margin-top:6px; text-align:center; }
+      #qbar { height:6px; background:#0f1830; border-radius:5px; margin-top:10px; overflow:hidden; }
+      #qfill { height:100%; width:100%; background:var(--accent); }
+
+      /* 결과 */
+      .score { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed var(--line); }
+      #reviewlist { max-height:280px; overflow:auto; margin:10px 0; }
+      #reviewlist .q { border-bottom:1px solid var(--line); padding:10px 0; font-size:14px; }
+      #reviewlist .q.wrong { background:rgba(255,93,108,.08); }
+      .tag { font-size:11px; color:#8ea3c8; }
+      .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; background:#25324c; }
+      .badge.ok { background:rgba(55,214,122,.16); color:var(--good); }
+      .badge.no { background:rgba(255,93,108,.16); color:var(--bad); }
+
+      /* ============ 모바일 터치 컨트롤 ============ */
+      /* 오버레이는 이벤트를 통과시키고, 버튼만 이벤트를 받는다. 터치 기기에서만 표시. */
+      #touchctrl { position:absolute; inset:0; z-index:6; pointer-events:none; display:none; }
+      body.touch #touchctrl:not(.hidden) { display:block; }
+      #touchctrl > * { pointer-events:auto; }
+
+      /* 좌하단 조향 조이스틱 (가로축 = 조향) */
+      #joyBase { position:absolute;
+                 left:calc(26px + env(safe-area-inset-left)); bottom:calc(26px + env(safe-area-inset-bottom));
+                 width:132px; height:132px; border-radius:50%;
+                 background:rgba(10,16,32,.5); border:2px solid var(--line);
+                 box-shadow:0 6px 24px rgba(0,0,0,.4); touch-action:none; }
+      #joyStick { position:absolute; left:50%; top:50%; width:58px; height:58px; margin:-29px 0 0 -29px;
+                  border-radius:50%; background:radial-gradient(circle at 35% 30%, #6fb6ff, var(--accent));
+                  border:2px solid rgba(255,255,255,.55); box-shadow:0 4px 14px rgba(0,0,0,.4); }
+      #joyHint { position:absolute; left:0; right:0; bottom:-20px; text-align:center;
+                 font-size:11px; color:#8ea3c8; letter-spacing:1px; }
+
+      /* 우하단 액션 버튼 */
+      #padRight { position:absolute;
+                  right:calc(18px + env(safe-area-inset-right)); bottom:calc(22px + env(safe-area-inset-bottom));
+                  display:grid; grid-template-columns:auto auto; grid-template-rows:auto auto;
+                  gap:12px; align-items:end; touch-action:none; }
+      .tbtn { -webkit-appearance:none; appearance:none; border:2px solid var(--line);
+              background:rgba(10,16,32,.62); color:var(--fg); font-weight:800; letter-spacing:.04em;
+              border-radius:16px; padding:0; touch-action:none; user-select:none; -webkit-user-select:none;
+              display:flex; flex-direction:column; align-items:center; justify-content:center;
+              backdrop-filter:blur(6px); box-shadow:0 4px 16px rgba(0,0,0,.35); }
+      .tbtn small { font-size:11px; font-weight:600; color:#c8d6f0; margin-top:2px; }
+      .tbtn.active { filter:brightness(1.25); transform:scale(.96); }
+      /* 가속: 크게, 우측 세로 열 */
+      #tGas   { grid-column:2; grid-row:1; width:96px; height:96px; font-size:30px;
+                background:rgba(55,214,122,.30); border-color:var(--good); color:#eafff2; }
+      #tBrake { grid-column:2; grid-row:2; width:96px; height:64px; font-size:22px;
+                background:rgba(255,93,108,.26); border-color:var(--bad); }
+      /* 드리프트/아이템: 좌측 열 */
+      #tDrift { grid-column:1; grid-row:1; width:82px; height:74px; font-size:14px; }
+      #tItem  { grid-column:1; grid-row:2; width:82px; height:74px; font-size:14px;
+                border-color:var(--accent); color:#dcecff; }
+      #tItem.has { background:rgba(255,176,32,.30); border-color:var(--warn);
+                   box-shadow:0 0 20px rgba(255,176,32,.45); color:#fff; }
+
+      /* 세로 화면 회전 안내 (터치 기기 한정) */
+      #rotate { position:absolute; inset:0; z-index:80; display:none;
+                background:rgba(6,10,20,.96); align-items:center; justify-content:center;
+                text-align:center; padding:24px; }
+      #rotate .msg { font-size:20px; font-weight:800; color:var(--accent); letter-spacing:.03em; line-height:1.6; }
+      body.touch #rotate { display:flex; }
+      @media (orientation:landscape) { body.touch #rotate { display:none; } }
+
+      /* 좁고 낮은 가로 화면: HUD·미니맵·퀴즈·안내를 압축해 조작을 가리지 않는다 */
+      @media (max-height:520px), ((max-width:960px) and (pointer:coarse)) {
+        #hud { padding:8px 12px; gap:12px; }
+        #standings { left:12px; top:76px; font-size:11px; min-width:150px; padding:6px 9px; }
+        #minimap { right:12px; top:12px; width:168px; height:112px; }
+        #lapbanner { right:12px; top:140px; }
+        #btnMute { right:12px; bottom:auto; top:12px; padding:6px 9px; font-size:15px; }
+        #btnFull { right:60px; bottom:auto; top:12px; padding:6px 9px; font-size:15px; }
+        /* 퀴즈는 조이스틱 위쪽 좌측에 — 우하단 버튼과 겹치지 않게 */
+        .quiz-card { left:12px; right:auto; bottom:170px; width:min(64vw,360px); padding:10px 12px; }
+        #qtext { font-size:14px; }
+        #ingameHelp { display:none; }
+        #itemslot { display:none; }
+        .card { width:min(94vw,440px); padding:20px 20px; }
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-BYYA3qMA.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game"></div>
+
+      <!-- HUD -->
+      <div id="hud" class="hidden">
+        <div class="cell"><span class="k">RANK</span><span class="v" id="hudRank">-</span></div>
+        <div class="cell"><span class="k">LAP</span><span class="v" id="hudLap">-</span></div>
+        <div class="cell"><span class="k">ITEM (Space)</span><span class="v" id="hudItem">—</span></div>
+        <div class="cell"><span class="k">SPEED</span><span class="v" id="hudSpeed">0</span></div>
+        <div class="cell"><span class="k">LAP TIME</span><span class="v" id="hudLapTime">0.0</span></div>
+        <div class="cell"><span class="k">BEST</span><span class="v" id="hudBest">—</span></div>
+        <div class="cell"><span class="k">DRIFT</span><span class="v" id="hudDrift">—</span></div>
+      </div>
+
+      <div id="standings" class="hidden"></div>
+      <button id="btnMute" title="소리 켜기/끄기 (M)">🔊</button>
+      <button id="btnFull" title="전체화면 (F)">⛶</button>
+      <canvas id="minimap" width="240" height="160" class="hidden"></canvas>
+
+      <div id="lapbanner" class="hidden"><div id="laptop">LAP</div><div id="lapnum"></div><div id="laptime"></div></div>
+      <div id="spinbanner" class="hidden"><span id="spintext"></span></div>
+      <div id="diag" class="hidden"></div>
+      <div id="itemslot" class="hidden">
+        <div id="itemicon">—</div>
+        <div id="itemname">아이템 없음</div>
+        <div id="itemkey">SPACE</div>
+      </div>
+      <div id="ingameHelp" class="hidden">
+        <span class="item"><span class="kbd">↑</span>가속</span>
+        <span class="item"><span class="kbd">↓</span>브레이크</span>
+        <span class="item"><span class="kbd">←</span><span class="kbd">→</span>조향</span>
+        <span class="item"><span class="kbd wide">Shift</span>드리프트</span>
+        <span class="item"><span class="kbd wide">Space</span>아이템</span>
+        <span class="item"><span class="kbd">1</span><span class="kbd">2</span><span class="kbd">3</span>문제</span>
+      </div>
+
+      <div id="countdown" class="hidden"><div id="countnum"></div></div>
+
+      <!-- 퀴즈 -->
+      <div id="quiz" class="quiz-card hidden">
+        <div id="qkind"></div>
+        <div id="qtext"></div>
+        <div id="qopts"></div>
+        <div id="qbar"><div id="qfill"></div></div>
+        <div id="qhint">달리면서 답해도 됩니다 · 키 <b>1 2 3</b></div>
+      </div>
+
+      <!-- 로비 -->
+      <div id="lobby" class="overlay">
+        <div class="card">
+          <h1>IP RACING</h1>
+          <p class="sub">지식재산권 <b>3D</b> 카트 레이싱 · 2~4인 · 2바퀴 · AI가 빈자리를 채웁니다<br><span style="color:#4da3ff">BUILD v19 · 조향 개선 · 트랙 2종 · 조작 UI</span></p>
+          <input id="nick" placeholder="닉네임 (예: 특허왕)" maxlength="12" />
+          <div id="trackpick" class="row" style="margin-bottom:12px">
+            <button class="trk on" data-track="city">🏙 IP CITY<br><small>짧고 빠른 코스</small></button>
+            <button class="trk" data-track="hills">⛰ IP HILLS<br><small>길고 굴곡 많은 코스</small></button>
+          </div>
+          <div class="row" id="startrow">
+            <button id="btnCreate">게임 만들기</button>
+            <button id="btnJoin" class="ghost">방 코드 입장</button>
+          </div>
+          <div id="joinbox" class="row hidden" style="align-items:center">
+            <input id="code" placeholder="방 코드 6자리" maxlength="6" style="margin:0;text-transform:uppercase;letter-spacing:3px" />
+            <button id="btnJoinGo" style="flex:0 0 auto">입장</button>
+          </div>
+          <div id="waiting" class="hidden">
+            <p class="sub">방 코드: <b id="roomcode"></b> · 코스: <b id="tracklabel">IP CITY</b></p>
+            <div id="players"></div>
+            <br />
+            <button id="btnReady" style="width:100%">준비 완료</button>
+          </div>
+          <p class="sub" style="margin-top:14px">
+            ↑ 가속 · <b>↓ 브레이크&후진</b> · ← → 조향 · <b>Shift</b> 드리프트 · <b>Space</b> 아이템 · 문제는 <b>1 2 3</b> · <b>M</b> 음소거 · <b>F</b> 전체화면 · <b>D</b> 진단 · <b>E</b> 엔진음
+          </p>
+          <p class="sub" id="lobbyMsg" style="margin:0"></p>
+        </div>
+      </div>
+
+      <!-- 결과 -->
+      <div id="result" class="overlay hidden">
+        <div class="card">
+          <h1>🏁 RESULT</h1>
+          <div id="scores"></div>
+          <h1 style="font-size:18px;margin-top:18px">🧠 IP REVIEW</h1>
+          <div id="reviewlist"></div>
+          <div class="row" style="margin-top:14px">
+            <button id="btnRematch">🔁 다시 하기</button>
+            <button id="btnQuit" class="ghost">나가기</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 모바일 터치 컨트롤 (터치 기기에서만 표시 · 레이스 중에만 노출) -->
+      <div id="touchctrl" class="hidden">
+        <div id="joyBase"><div id="joyStick"></div><div id="joyHint">조향</div></div>
+        <div id="padRight">
+          <button id="tGas" class="tbtn">▲<small>가속</small></button>
+          <button id="tBrake" class="tbtn">▼<small>브레이크</small></button>
+          <button id="tDrift" class="tbtn">DRIFT<small>드리프트</small></button>
+          <button id="tItem" class="tbtn">아이템<small>사용</small></button>
+        </div>
+      </div>
+
+      <!-- 세로 화면 회전 안내 -->
+      <div id="rotate"><div class="msg">📱 기기를 가로로<br>돌려주세요</div></div>
+    </div>
+
+  </body>
+</html>

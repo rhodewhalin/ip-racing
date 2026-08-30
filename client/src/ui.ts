@@ -179,6 +179,7 @@ export const ui = {
     this.show("hud");
     this.show("standings");
     this.show("minimap");
+    this.show("touchctrl"); // 터치 기기에서만 CSS로 실제 노출된다
     this.drawMinimap(s);
     const me = net.me();
     if (!me) return;
@@ -195,6 +196,7 @@ export const ui = {
     $("itemicon").textContent = has ? (ITEM_LABEL[me.item] ?? "").split(" ")[0] : "—";
     $("itemname").textContent = has ? (ITEM_LABEL[me.item] ?? "").split(" ")[1] ?? "" : "아이템 없음";
     $("itemkey").textContent = has ? "SPACE 로 사용" : "SPACE";
+    $("tItem").classList.toggle("has", has); // 터치 아이템 버튼 강조
     $("hudSpeed").textContent = String(Math.round(Math.abs(me.speed)));
     $("hudItem").classList.toggle("ready", !!me.item);
 
@@ -374,6 +376,7 @@ export const ui = {
       this.hide("minimap");
       this.hide("lapbanner");
       this.hide("quiz");
+      this.hide("touchctrl");
       this.show("lobby");
       this.show("waiting");
       $("startrow").classList.add("hidden");
@@ -400,6 +403,7 @@ export const ui = {
     this.hide("minimap");
     this.hide("lapbanner");
     this.hide("itemslot");
+    this.hide("touchctrl");
     this.show("result");
 
     $("scores").innerHTML = data.results
