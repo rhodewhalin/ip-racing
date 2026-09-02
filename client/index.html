@@ -210,7 +210,16 @@
         #qtext { font-size:14px; }
         #ingameHelp { display:none; }
         #itemslot { display:none; }
-        .card { width:min(94vw,440px); padding:20px 20px; }
+        /* 메뉴 카드 — 내용이 화면보다 커져도 위아래가 잘리지 않게: 상단 정렬 + 내부 스크롤 */
+        .overlay { align-items:flex-start; }
+        .card { width:min(94vw,440px); padding:14px 16px; max-height:calc(100vh - 16px);
+                margin:8px 0; overflow-y:auto; }
+        h1 { font-size:20px; }
+        .sub { margin:0 0 10px; font-size:11px; }
+        input { padding:8px 10px; margin:4px 0 8px; font-size:13px; }
+        button { padding:9px 12px; font-size:13px; }
+        .prow { font-size:12px; padding:4px 0; }
+        #reviewlist { max-height:150px; }
       }
     </style>
   </head>
