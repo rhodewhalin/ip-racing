@@ -402,11 +402,13 @@ export class Race3D {
   private buildStartLine(pts: number[][], halfW: number) {
     const a = pts[0], b = pts[1];
     const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    // 긴 축(halfW*2)이 도로를 **가로지르도록** 배치한다.
+    // rotation.z=-ang 는 폭을 진행 방향과 나란히(=인지 안 됨) 놓으므로 90° 더 돌린다.
     const geo = new THREE.PlaneGeometry(halfW * 2, 90);
     const mat = new THREE.MeshLambertMaterial({ map: checkerTexture() });
     const m = new THREE.Mesh(geo, mat);
     m.rotation.x = -Math.PI / 2;
-    m.rotation.z = -ang;
+    m.rotation.z = -ang - Math.PI / 2;
     m.position.set(a[0], 2, a[1]);
     this.scene.add(m);
   }
