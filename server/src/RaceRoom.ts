@@ -245,17 +245,18 @@ export class RaceRoom extends Room<RoomState> {
    * 한 줄에서 하나를 먹으면 나머지는 quizActive 때문에 소모되지 않는다.
    */
   /**
-   * 출발 그리드. 2열로 세운다.
+   * 출발 그리드. **네 대를 같은 출발선 위에 한 줄**로 세운다.
    *
-   * ⚠️ 이전엔 좌우로 -96/-32/32/96 (간격 64)에 한 줄로 세웠는데,
-   *    충돌 판정 거리가 84라 **네 대가 서로 겹친 채 시작**했다.
-   *    매 틱 충돌 해소가 옆으로 밀어내고 벽이 되밀면서 엉켰다.
-   *    이제 좌우 간격 220, 앞뒤 간격 150 으로 어느 쌍도 겹치지 않는다.
+   * ⚠️ 예전엔 좌우 -96/-32/32/96 (간격 64) 한 줄이라 충돌거리 84에 겹쳐서
+   *    엉켰고, 그 다음엔 2×2 계단식(앞뒤 150)으로 피했다. 이제 도로 폭이
+   *    560(반폭 280)으로 넓어져 좌우 간격 120으로도 한 줄이 가능하다.
+   *    -180/-60/60/180 → 인접 간격 120 > 충돌거리 84, 어느 쌍도 안 겹친다.
+   *    바깥 카트도 180 + 카트 반폭(~40) = 220 < 벽(280)이라 여유가 있다.
    */
   private gridSlot(idx: number) {
-    const row = Math.floor(idx / 2);      // 0, 0, 1, 1
-    const col = idx % 2 === 0 ? -110 : 110;
-    const s = 200 - row * 150;            // 앞줄 200, 뒷줄 50
+    const cols = [-180, -60, 60, 180];    // 같은 선, 좌우로만 분산
+    const col = cols[idx] ?? 0;
+    const s = 120;                        // 출발선 바로 뒤, 전원 동일
     return offsetPoint(this.track, s, col);
   }
 
@@ -271,8 +272,8 @@ export class RaceRoom extends Room<RoomState> {
         this.state.pickups.push(p);
       });
     };
-    CONFIG.itemBoxAt.forEach((f, i) => row("item", f, i, [-120, 0, 120]));
-    CONFIG.ipBlockAt.forEach((f, i) => row("block", f, i, [-110, 0, 110]));
+    CONFIG.itemBoxAt.forEach((f, i) => row("item", f, i, [-170, 0, 170]));
+    CONFIG.ipBlockAt.forEach((f, i) => row("block", f, i, [-160, 0, 160]));
   }
 
   // ---------- 메인 루프 ----------

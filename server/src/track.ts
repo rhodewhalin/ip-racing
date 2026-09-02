@@ -199,4 +199,5 @@ export function getTrack(id: string): TrackDef {
 export const TRACK_POINTS: number[][] = TRACKS[0].points;
 
 // v1은 300이었다. 최소 회전반경 248 대비 너무 좁아 코너에서 무조건 튀어나갔다.
-export const TRACK_WIDTH = 440;
+// v2는 440. 카트 4대가 나란히 서기엔 여전히 빠듯해 추월·경합 공간을 위해 560으로 넓힘.
+export const TRACK_WIDTH = 560;
