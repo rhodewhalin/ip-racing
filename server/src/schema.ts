@@ -67,6 +67,17 @@ export class HazardState extends Schema {
   @type("number") y = 0;
 }
 
+/** 날아가는 물폭탄. 이동시간이 있어 대상이 회피(급회전·실드)할 수 있다. */
+export class ProjectileState extends Schema {
+  @type("string") id = "";
+  @type("string") owner = "";
+  @type("string") target = "";   // 약한 유도 대상 (없으면 직진)
+  @type("number") x = 0;
+  @type("number") y = 0;
+  @type("number") vx = 0;
+  @type("number") vy = 0;
+}
+
 export class RoomState extends Schema {
   // lobby | countdown | racing | finished
   @type("string") phase = "lobby";
@@ -81,4 +92,5 @@ export class RoomState extends Schema {
   @type({ map: KartState }) karts = new MapSchema<KartState>();
   @type([PickupState]) pickups = new ArraySchema<PickupState>();
   @type([HazardState]) hazards = new ArraySchema<HazardState>();
+  @type([ProjectileState]) projectiles = new ArraySchema<ProjectileState>();
 }

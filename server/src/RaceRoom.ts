@@ -10,7 +10,7 @@
 // ============================================================
 
 import { Room, Client } from "colyseus";
-import { RoomState, KartState, PickupState, HazardState } from "./schema";
+import { RoomState, KartState, PickupState, HazardState, ProjectileState } from "./schema";
 import { CONFIG, ItemId, QuizKind } from "./gameConfig";
 import { KART, KartInput, stepKart, driftTier, driftTierInfo, applyWall, resolveBump } from "./physics";
 import {
@@ -41,6 +41,8 @@ export class RaceRoom extends Room<RoomState> {
   private dispenser = new QuestionDispenser();
   private respawnAt = new Map<string, number>();
   private hazardArm = new Map<string, number>();
+  private projArm = new Map<string, number>();   // 발사체 자기 면역 만료 시각
+  private projLife = new Map<string, number>();   // 발사체 소멸 시각
   private offMs = new Map<string, number>();      // 코스 이탈 지속 시간
   private lastGoodS = new Map<string, number>();  // 마지막으로 코스 위에 있던 지점
   private bots = new Map<string, BotDriver>();
@@ -477,6 +479,7 @@ export class RaceRoom extends Room<RoomState> {
 
     this.checkPickups(karts, now);
     this.checkHazards(karts, now);
+    this.advanceProjectiles(karts, dt, now);
     this.respawnPickups(now);
     this.recomputeRanks(karts);
 
@@ -711,19 +714,83 @@ export class RaceRoom extends Room<RoomState> {
       return;
     }
 
-    // bomb: 바로 앞 순위 1명
+    // bomb: 물폭탄을 발사체로 던진다. 바로 앞 순위 1명을 약하게 유도하지만,
+    // 이동시간이 있어 대상이 급회전하거나 실드로 회피할 수 있다(명중은 advanceProjectiles에서).
     const target = [...this.state.karts.values()]
       .filter((o) => o.sessionId !== k.sessionId && !o.finished && o.rank < k.rank)
       .sort((a, b) => b.rank - a.rank)[0];
-    if (!target) return;
 
-    if (target.shieldMs > 0) {
-      target.shieldMs = 0;
-      this.broadcast("fx", { type: "blocked", id: target.sessionId, from: k.sessionId });
-    } else {
-      target.stunMs = CONFIG.stunMs;
-      this.broadcast("fx", { type: "bomb", id: target.sessionId, from: k.sessionId });
-      this.openQuiz(target, "escape"); // 갇혔을 때 문제를 풀면 탈출
+    const now = Date.now();
+    // 조준각: 대상이 있으면 그쪽, 없으면 진행 방향 직진
+    const ang = target ? Math.atan2(target.y - k.y, target.x - k.x) : k.heading;
+    const p = new ProjectileState();
+    p.id = `bomb-${now}-${Math.floor(Math.random() * 1000)}`;
+    p.owner = k.sessionId;
+    p.target = target?.sessionId ?? "";
+    p.x = k.x + Math.cos(k.heading) * 46;   // 카트 코앞에서 발사
+    p.y = k.y + Math.sin(k.heading) * 46;
+    p.vx = Math.cos(ang) * CONFIG.bombSpeed;
+    p.vy = Math.sin(ang) * CONFIG.bombSpeed;
+    this.state.projectiles.push(p);
+    this.projArm.set(p.id, now + CONFIG.bombArmMs);
+    this.projLife.set(p.id, now + CONFIG.bombLifeMs);
+    this.broadcast("fx", { type: "throw", id: k.sessionId, x: p.x, y: p.y });
+  }
+
+  /** 물폭탄 발사체 전진·유도·명중 판정. */
+  private advanceProjectiles(karts: KartState[], dt: number, now: number) {
+    const angDiff = (a: number, b: number) => {
+      let d = a - b;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      return d;
+    };
+    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
+      const p = this.state.projectiles[i];
+      if (!p) continue;
+      const remove = () => {
+        this.state.projectiles.splice(i, 1);
+        this.projArm.delete(p.id); this.projLife.delete(p.id);
+      };
+
+      // 약한 유도 (급회전으로 뿌리칠 수 있는 수준)
+      const tgt = p.target ? this.state.karts.get(p.target) : undefined;
+      if (tgt && !tgt.finished) {
+        const want = Math.atan2(tgt.y - p.y, tgt.x - p.x);
+        const cur = Math.atan2(p.vy, p.vx);
+        const maxTurn = CONFIG.bombHomingRate * dt;
+        const turn = Math.max(-maxTurn, Math.min(maxTurn, angDiff(want, cur)));
+        const na = cur + turn;
+        p.vx = Math.cos(na) * CONFIG.bombSpeed;
+        p.vy = Math.sin(na) * CONFIG.bombSpeed;
+      }
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      // 수명 초과 → 소멸(빗나감)
+      if ((this.projLife.get(p.id) ?? 0) <= now) { remove(); continue; }
+
+      // 명중 판정
+      const armed = (this.projArm.get(p.id) ?? 0) <= now;
+      let hit = false;
+      for (const k of karts) {
+        if (k.finished || k.respawnMs > 0) continue;
+        if (!armed && k.sessionId === p.owner) continue;
+        if (Math.hypot(k.x - p.x, k.y - p.y) > CONFIG.bombHitRadius) continue;
+
+        if (k.shieldMs > 0) {
+          k.shieldMs = 0;
+          this.broadcast("fx", { type: "blocked", id: k.sessionId, from: p.owner });
+        } else {
+          k.stunMs = CONFIG.stunMs;
+          this.broadcast("fx", { type: "bomb", id: k.sessionId, from: p.owner });
+          this.openQuiz(k, "escape"); // 갇혔을 때 문제를 풀면 탈출
+        }
+        hit = true;
+        break;
+      }
+      if (hit) remove();
     }
   }
 
@@ -909,6 +976,9 @@ export class RaceRoom extends Room<RoomState> {
     this.respawnAt.clear();
     while (this.state.hazards.length) this.state.hazards.pop();
     this.hazardArm.clear();
+    while (this.state.projectiles.length) this.state.projectiles.pop();
+    this.projArm.clear();
+    this.projLife.clear();
 
     // 문제 순서를 새로 섞는다
     this.dispenser = new QuestionDispenser();

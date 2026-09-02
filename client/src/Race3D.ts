@@ -44,6 +44,7 @@ export class Race3D {
   private ghost: Record<string, { x: number; y: number; heading: number }> = {};
   private pickups: Record<string, THREE.Mesh> = {};
   private hazards: Record<string, THREE.Mesh> = {};
+  private projectiles: Record<string, THREE.Group> = {};
 
   private local: KartBody = {
     x: 0, y: 0, heading: 0, speed: 0, steerActual: 0, driftCharge: 0, drifting: false,
@@ -98,6 +99,7 @@ export class Race3D {
     net.on("rematch", () => {
       // 재경기: 카트 오브젝트를 전부 정리한다. 남겨두면 잔상이 된다.
       for (const id of Object.keys(this.karts)) this.disposeKart(id);
+      for (const id of Object.keys(this.projectiles)) this.disposeProjectile(id);
       this.ghost = {};
       this.localReady = false;
       this.stallMs = 0;
@@ -885,6 +887,63 @@ export class Race3D {
         this.scene.remove(m); delete this.hazards[id];
       }
     }
+
+    // 날아가는 물폭탄 발사체
+    const pjLive = new Set<string>();
+    for (const p of (state.projectiles ?? []) as any[]) {
+      pjLive.add(p.id);
+      let g = this.projectiles[p.id];
+      if (!g) g = this.projectiles[p.id] = this.makeProjectile();
+      g.position.set(p.x, 46 + Math.sin(performance.now() / 90) * 4, p.y);
+      // 진행 방향으로 살짝 눕혀 물방울 꼬리가 뒤를 향하게
+      g.rotation.y = -Math.atan2(p.vy, p.vx);
+      const s = 1 + Math.sin(performance.now() / 60) * 0.08;
+      g.scale.set(s, s, s);
+    }
+    for (const id of Object.keys(this.projectiles)) {
+      if (!pjLive.has(id)) { this.disposeProjectile(id); }
+    }
+  }
+
+  /** 빛나는 물폭탄 (Bloom이 잡도록 emissive). 이미지 자산 없음. */
+  private makeProjectile(): THREE.Group {
+    const g = new THREE.Group();
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(14, 16, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x2fa8ff, emissive: 0x2fa8ff, emissiveIntensity: 1.8,
+        metalness: 0.1, roughness: 0.3,
+      })
+    );
+    g.add(core);
+    // 반투명 물 껍질
+    const shell = new THREE.Mesh(
+      new THREE.SphereGeometry(18, 16, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x8fd6ff, transparent: true, opacity: 0.35,
+        emissive: 0x2fa8ff, emissiveIntensity: 0.6, roughness: 0.1,
+      })
+    );
+    g.add(shell);
+    // 꼬리(뒤로 뻗는 원뿔)
+    const tail = new THREE.Mesh(
+      new THREE.ConeGeometry(9, 40, 10),
+      new THREE.MeshBasicMaterial({ color: 0x66c2ff, transparent: true, opacity: 0.5 })
+    );
+    tail.rotation.z = Math.PI / 2; tail.position.x = -24;
+    g.add(tail);
+    this.scene.add(g);
+    return g;
+  }
+
+  private disposeProjectile(id: string) {
+    const g = this.projectiles[id];
+    if (!g) return;
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); }
+    });
+    this.scene.remove(g);
+    delete this.projectiles[id];
   }
 
   // ---------- 사이드미러형 후방 뷰 + 레이더 (클라이언트 전용) ----------
@@ -1037,6 +1096,19 @@ export class Race3D {
       }
     } catch {}
 
+    // 날아오는 물폭탄 — 빨강 펄스(강한 위협 신호)
+    const blink = 0.5 + 0.5 * Math.sin(performance.now() / 90);
+    try {
+      for (const pj of ((st.projectiles ?? []) as any)) {
+        const p = toRadar(pj.x, pj.y); if (p.d > RANGE) continue;
+        ctx.beginPath(); ctx.arc(p.x, p.y, (3 + blink * 2) * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,${Math.round(40 + blink * 60)},40,${0.6 + blink * 0.4})`;
+        ctx.fill();
+        // 나를 향하거나 가까우면 위협
+        if (pj.target === net.selfId || p.d < 900) threat = true;
+      }
+    } catch {}
+
     // 카트 — 각자 색. 나는 중앙 삼각형.
     for (const k of (st.karts as any).values()) {
       if (k.sessionId === net.selfId) continue;
@@ -1135,7 +1207,11 @@ export class Race3D {
     if (!g) return;
     const isMe = d.id === net.selfId;
 
-    if (d.type === "bomb" || d.type === "spin") {
+    if (d.type === "throw") {
+      // 물폭탄 발사: 발사 지점에 물보라 + 던진 사람에게 whoosh
+      for (let i = 0; i < 8; i++) this.emitSpark(d.x ?? g.position.x, d.y ?? g.position.z, Math.random() * 6.3, 0x66c2ff);
+      if (isMe) audio.tone(880, 0.16, "sine", 0.18, 260);
+    } else if (d.type === "bomb" || d.type === "spin") {
       for (let i = 0; i < 14; i++) this.emitSpark(g.position.x, g.position.z, Math.random() * 6.3, 0x4da3ff);
       if (isMe) audio.hit();
     } else if (d.type === "drift_boost" || d.type === "boost") {

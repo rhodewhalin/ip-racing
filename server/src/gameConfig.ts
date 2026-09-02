@@ -53,6 +53,15 @@ export const CONFIG = {
   // --- 아이템 ---
   stunMs: 2200,        // 물폭탄 피격 (3200은 너무 길어 '멈췄다'는 인상을 줬다)
   oilSpinMs: 1300,     // 기름 밟음
+
+  // --- 물폭탄 발사체 (즉시명중 → 이동하는 발사체로 변경, 회피 가능) ---
+  bombSpeed: 840,      // 카트 최고속(520)보다 빨라 결국 따라잡되, 급회전에 뿌리쳐진다
+  bombHitRadius: 50,   // 명중 판정 거리
+  bombLifeMs: 2400,    // 최대 비행 시간 (빗나가면 소멸)
+  bombHomingRate: 2.3, // 유도 회전율(rad/s ≈ 132°/s). 근거리 급회전으로 락을 깰 수 있는 수준
+  bombArmMs: 100,      // 발사 직후 자기 면역
+
+
   shieldMs: 7000,
   boostMul: 1.5,
   boostMs: 1800,
