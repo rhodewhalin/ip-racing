@@ -12,6 +12,11 @@
 // ============================================================
 
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { net, InputState } from "./net";
 import { KartBody, stepKart, applyWall, resolveBump, KART } from "./physics";
 import { buildTrack, project, pointAt, TrackData } from "./track";
@@ -26,6 +31,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 export class Race3D {
   private renderer!: THREE.WebGLRenderer;
+  private composer!: EffectComposer;
+  private sun!: THREE.DirectionalLight;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -99,7 +106,7 @@ export class Race3D {
         this.lastError = String(e?.message ?? e);
         if (this.frameErrors <= 5) console.error("[Race3D] frame error", e);
       }
-      try { this.renderer.render(this.scene, this.camera); } catch {}
+      try { this.composer.render(); } catch {}
     });
   }
 
@@ -112,9 +119,21 @@ export class Race3D {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(w, h);
+    // 필름 톤매핑 + sRGB 출력 = 색이 눈에 뜨는 대로 감마 보정되고 하이라이트가 부드럽게 뭉개진다.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // 실제 그림자맵. 모바일은 성능을 위해 절반 해상도.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
+
+    // 환경맵(스튜디오 IBL) — 크롬·도색의 금속 반사가 살아난다. 이미지 자산 0.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
     // 안개 색을 지평선 하늘색과 맞춰야 멀리가 자연스럽게 녹아든다
     this.scene.fog = new THREE.Fog(0x486f96, 2600, 6400);
 
@@ -128,21 +147,36 @@ export class Race3D {
     this.scene.add(this.sky);
     this.scene.add(this.mounts);
 
-    this.scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x2e4a2a, 1.0));
-    const sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
+    this.scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x2e4a2a, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff2d8, 2.2);
     sun.position.set(1600, 2600, 1000);
+    // 태양 그림자. 트랙 전체를 덮으면 흐려지므로 카메라 대상(내 카트) 주변만 선명하게
+    // 비추도록 매 프레임 이동시킨다(updateShadow). 여기선 카메라 절두체만 잡는다.
+    sun.castShadow = true;
+    const shMap = this.isTouch ? 1024 : 2048;
+    sun.shadow.mapSize.set(shMap, shMap);
+    sun.shadow.camera.near = 200;
+    sun.shadow.camera.far = 5000;
+    const shR = 900;
+    sun.shadow.camera.left = -shR; sun.shadow.camera.right = shR;
+    sun.shadow.camera.top = shR; sun.shadow.camera.bottom = -shR;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 12;
     this.scene.add(sun);
-    const rim = new THREE.DirectionalLight(0x88aaff, 0.45);
+    this.scene.add(sun.target);
+    this.sun = sun;
+    const rim = new THREE.DirectionalLight(0x88aaff, 0.4);
     rim.position.set(-1400, 900, -1200);
     this.scene.add(rim);
 
-    // 잔디 바닥 (절차적 텍스처)
+    // 잔디 바닥 (절차적 텍스처) — 그림자를 받는다
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(26000, 26000),
-      new THREE.MeshLambertMaterial({ map: grassTexture() })
+      new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1, metalness: 0 })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -2;
+    ground.receiveShadow = true;
     this.scene.add(ground);
 
     // 스파크 풀 (매번 생성/파괴하면 GC가 튄다)
@@ -157,6 +191,21 @@ export class Race3D {
       this.sparks.push(m);
     }
 
+    // Bloom 후처리 파이프라인. 밝은 것(스파크·부스트·햇빛 받은 크롬)만 번지게
+    // threshold를 높게 잡는다. 모바일은 해상도를 낮춰 부하를 줄인다.
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(w, h),
+      this.isTouch ? 0.45 : 0.6,  // strength
+      0.5,                        // radius
+      0.82                        // threshold
+    );
+    this.composer.addPass(bloom);
+    this.composer.addPass(new OutputPass());
+    this.composer.setSize(w, h);
+    this.composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
     addEventListener("resize", () => this.resize());
     // 모바일: 방향 전환·iOS 사파리 주소창 접힘에 캔버스를 다시 맞춘다
     addEventListener("orientationchange", () => setTimeout(() => this.resize(), 250));
@@ -169,6 +218,7 @@ export class Race3D {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+    this.composer.setSize(w, h);
   }
 
   private bindInput() {
@@ -288,7 +338,9 @@ export class Race3D {
     geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, map, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, map, side: THREE.DoubleSide }));
+    mesh.receiveShadow = true;   // 카트 그림자가 노면·커브에 드리운다
+    return mesh;
   }
 
   /** 좌우 벽. 이제 코스 밖으로 나갈 수 없고, 닿으면 긁으며 미끄러진다. */
@@ -525,10 +577,17 @@ export class Race3D {
     }
     g.userData.frontWheels = wheels;
 
-    // 접지 그림자 (실제 그림자 대신 — 비용이 거의 없다)
+    // 단단한 부품만 실제 그림자를 드리운다(반투명 blob·실드·라벨 제외).
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
+        o.castShadow = true;
+      }
+    });
+
+    // 접지 그림자 (실제 그림자를 보강하는 부드러운 접지 AO — 비용이 거의 없다)
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(58, 20),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false })
     );
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 1.5;
@@ -840,6 +899,13 @@ export class Race3D {
     // 배경을 카메라 위치로 이동 (스카이박스 방식)
     if (this.sky) this.sky.position.copy(this.camera.position);
     if (this.mounts) this.mounts.position.set(this.camera.position.x, 0, this.camera.position.z);
+
+    // 그림자 절두체를 내 카트 주변으로 옮겨 선명한 접지 그림자를 유지한다.
+    // 태양은 방향광이므로 위치를 카트 기준 상대 오프셋으로 따라오게 하고 target을 카트로 둔다.
+    if (this.sun) {
+      this.sun.target.position.set(this.local.x, 0, this.local.y);
+      this.sun.position.set(this.local.x + 1600, 2600, this.local.y + 1000);
+    }
 
     // 부스트 중 시야각을 살짝 넓혀 속도감을 준다
     const targetFov = 62 + (me.boostMs > 0 ? 9 : 0) + t * 4;
