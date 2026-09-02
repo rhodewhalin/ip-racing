@@ -978,6 +978,32 @@ export class RaceRoom extends Room<RoomState> {
       });
 
     this.broadcast("race_end", { results, review });
+
+    this.reportScoresToHub(results);
+    this.raceSeq++;
+  }
+
+  private raceSeq = 1; // 리매치마다 늘어나는 경기 번호 — 허브 sessionId 유니크 보장용
+
+  /** 허브 전광판 브리지 — 사람 결과만 hub /api/scores/server로 전송 (fire-and-forget).
+   *  HUB_SCORE_URL·KIPLAY_SERVICE_TOKEN 없는 독립 배포에선 조용히 건너뛴다. */
+  private reportScoresToHub(results: Array<{ nickname: string; finalScore: number; isBot: boolean }>) {
+    const url = process.env.HUB_SCORE_URL;
+    const token = process.env.KIPLAY_SERVICE_TOKEN;
+    if (!url || !token) return;
+    const sessionId = `${this.roomId}:${this.raceSeq}`;
+    for (const r of results) {
+      if (r.isBot) continue; // 전광판은 사람 순위만 — 봇 제외
+      void fetch(`${url.replace(/\/+$/, "")}/api/scores/server`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ gameId: "ip-racing", sessionId, player: r.nickname.slice(0, 20), score: r.finalScore }),
+      })
+        .then((res) => {
+          if (!res.ok) console.warn(`[bridge] 점수 전송 거부 ${res.status} (${r.nickname})`);
+        })
+        .catch((e: unknown) => console.warn(`[bridge] 점수 전송 오류: ${e instanceof Error ? e.message : e}`));
+    }
   }
 }
 

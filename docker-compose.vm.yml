@@ -24,6 +24,8 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: "2567"
+      KIPLAY_SERVICE_TOKEN: ${KIPLAY_SERVICE_TOKEN}
+      HUB_SCORE_URL: http://hub:8787
     networks:
       - default
       - hubnet
