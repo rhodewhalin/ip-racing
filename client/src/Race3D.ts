@@ -75,12 +75,21 @@ export class Race3D {
   private sky!: THREE.Mesh;
   private mounts!: THREE.Group;
 
+  // 사이드미러형 후방 뷰 + 레이더 HUD (클라이언트 전용, 서버 무관)
+  private rearCam!: THREE.PerspectiveCamera;
+  private mirrorEl: HTMLElement | null = null;
+  private radarCanvas: HTMLCanvasElement | null = null;
+  private radarCtx: CanvasRenderingContext2D | null = null;
+  private mirrorRect = { x: 0, y: 0, w: 0, h: 0 };  // CSS px, 좌상단 기준
+  private threatPulse = 0;
+
   constructor(private container: HTMLElement) {}
 
   start() {
     if (this.running) return;
     this.running = true;
     this.initThree();
+    this.buildMirrorHud();
     this.bindInput();
     this.bindTouch();
     net.on("fx", (d: any) => this.onFx(d));
@@ -107,6 +116,9 @@ export class Race3D {
         if (this.frameErrors <= 5) console.error("[Race3D] frame error", e);
       }
       try { this.composer.render(); } catch {}
+      // 사이드미러: 메인 화면 위에 후방 3D 뷰를 인셋으로 덧그린다
+      try { this.renderMirror(); } catch (e) { if (this.frameErrors <= 5) console.error("[Race3D] mirror", e); }
+      try { this.drawRadar(); } catch {}
     });
   }
 
@@ -139,6 +151,9 @@ export class Race3D {
 
     this.camera = new THREE.PerspectiveCamera(62, w / h, 5, 12000);
     this.camera.position.set(0, 200, 0);
+
+    // 후방 뷰 전용 카메라 (사이드미러). aspect는 미러 크기에 맞춰 매 프레임 갱신.
+    this.rearCam = new THREE.PerspectiveCamera(66, 2.4, 5, 12000);
 
     // 하늘과 산은 카메라를 따라다닌다 = 항상 지평선에 머문다.
     // 고정해 두면 트랙과 겹쳐서 코스 위에 삼각형이 나타난다.
@@ -219,6 +234,7 @@ export class Race3D {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
+    this.layoutMirror();
   }
 
   private bindInput() {
@@ -522,6 +538,7 @@ export class Race3D {
   private makeKart(k: any, i: number): THREE.Group {
     const g = new THREE.Group();
     const color = COLORS[i % COLORS.length];
+    g.userData.color = color;   // 레이더에서 같은 색으로 표시
     const paint = new THREE.MeshStandardMaterial({ color, metalness: 0.35, roughness: 0.42 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x161b28, metalness: 0.2, roughness: 0.7 });
     const chrome = new THREE.MeshStandardMaterial({ color: 0xc9d4e6, metalness: 0.85, roughness: 0.25 });
@@ -868,6 +885,181 @@ export class Race3D {
         this.scene.remove(m); delete this.hazards[id];
       }
     }
+  }
+
+  // ---------- 사이드미러형 후방 뷰 + 레이더 (클라이언트 전용) ----------
+
+  /** 사이드미러 프레임 DOM + 레이더 캔버스를 만든다. 이미지 자산 없음(순수 CSS). */
+  private buildMirrorHud() {
+    if (document.getElementById("rvMirrorStyle")) {
+      this.mirrorEl = document.getElementById("rvMirror");
+      this.radarCanvas = document.getElementById("rvRadar") as HTMLCanvasElement;
+      this.radarCtx = this.radarCanvas?.getContext("2d") ?? null;
+      this.layoutMirror();
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = "rvMirrorStyle";
+    style.textContent = `
+      #rvMirror{position:fixed;top:12px;left:50%;transform:translateX(-50%);
+        pointer-events:none;z-index:40;border-radius:16px 16px 22px 22px;
+        box-shadow:0 6px 22px rgba(0,0,0,.45),inset 0 0 0 3px rgba(20,26,40,.9),
+          inset 0 0 0 6px rgba(150,170,200,.35);
+        background:transparent;overflow:hidden;opacity:0;transition:opacity .25s,box-shadow .12s;}
+      #rvMirror.on{opacity:.96;}
+      #rvMirror.threat{box-shadow:0 6px 26px rgba(255,40,40,.55),
+        inset 0 0 0 3px rgba(255,60,60,.95),inset 0 0 0 6px rgba(255,120,120,.5);}
+      #rvMirror::after{content:"";position:absolute;inset:0;pointer-events:none;
+        background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,0) 32%);}
+      #rvMirror .rvTag{position:absolute;top:5px;left:10px;font:600 10px system-ui,sans-serif;
+        color:rgba(220,232,255,.85);letter-spacing:1px;text-shadow:0 1px 2px #000;z-index:2;}
+      #rvRadar{position:absolute;inset:0;width:100%;height:100%;}
+      @media (max-width:640px){#rvMirror{top:58px;}}`;
+    document.head.appendChild(style);
+
+    const box = document.createElement("div");
+    box.id = "rvMirror";
+    const tag = document.createElement("div");
+    tag.className = "rvTag";
+    tag.textContent = "REAR";
+    const cv = document.createElement("canvas");
+    cv.id = "rvRadar";
+    box.appendChild(cv);
+    box.appendChild(tag);
+    document.body.appendChild(box);
+
+    this.mirrorEl = box;
+    this.radarCanvas = cv;
+    this.radarCtx = cv.getContext("2d");
+    this.layoutMirror();
+  }
+
+  /** 미러 크기·위치를 화면에 맞춘다. 캔버스 기준 스크린 좌표(mirrorRect)도 계산. */
+  private layoutMirror() {
+    if (!this.mirrorEl || !this.radarCanvas) return;
+    const vw = this.container.clientWidth || innerWidth;
+    const minW = this.isTouch ? 150 : 220;
+    const w = Math.max(minW, Math.min(vw * (this.isTouch ? 0.42 : 0.34), 380));
+    const h = Math.round(w / 2.4);
+    this.mirrorEl.style.width = w + "px";
+    this.mirrorEl.style.height = h + "px";
+    const dpr = Math.min(devicePixelRatio, 2);
+    this.radarCanvas.width = Math.round(w * dpr);
+    this.radarCanvas.height = Math.round(h * dpr);
+
+    // 캔버스(WebGL) 대비 미러의 위치 → scissor 뷰포트(좌상단 CSS px)
+    const canvas = this.renderer.domElement.getBoundingClientRect();
+    const m = this.mirrorEl.getBoundingClientRect();
+    this.mirrorRect = { x: m.left - canvas.left, y: m.top - canvas.top, w, h };
+  }
+
+  /** 후방 3D 뷰를 메인 화면 위 인셋으로 덧그린다(가위 영역). */
+  private renderMirror() {
+    const st = net.state;
+    const show = !!st && st.phase === "racing" && !!this.mirrorEl && this.localReady;
+    if (this.mirrorEl) this.mirrorEl.classList.toggle("on", show);
+    if (!show) return;
+
+    // 위치가 바뀔 수 있으니(주소창 접힘 등) 가볍게 재동기화
+    const canvas = this.renderer.domElement.getBoundingClientRect();
+    const mb = this.mirrorEl!.getBoundingClientRect();
+    this.mirrorRect.x = mb.left - canvas.left;
+    this.mirrorRect.y = mb.top - canvas.top;
+
+    const h = this.local.heading;
+    // 카트 뒤 위로 올라가 앞(=진행 반대, 뒤쪽)을 내려다본다 = 백미러 시점
+    const bx = this.local.x + Math.cos(h) * 60;
+    const bz = this.local.y + Math.sin(h) * 60;
+    this.rearCam.position.set(bx, 90, bz);
+    this.rearCam.up.copy(UP);
+    this.rearCam.lookAt(this.local.x - Math.cos(h) * 600, 20, this.local.y - Math.sin(h) * 600);
+
+    const r = this.rearCam;
+    const rect = this.mirrorRect;
+    r.aspect = rect.w / rect.h;
+    r.updateProjectionMatrix();
+
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const vx = rect.x;
+    const vy = size.y - (rect.y + rect.h);   // WebGL은 좌하단 원점
+    const gl = this.renderer;
+    gl.autoClear = false;
+    gl.setScissorTest(true);
+    gl.setViewport(vx, vy, rect.w, rect.h);
+    gl.setScissor(vx, vy, rect.w, rect.h);
+    gl.clearDepth();
+    gl.render(this.scene, this.rearCam);
+    gl.setScissorTest(false);
+    gl.setViewport(0, 0, size.x, size.y);
+    gl.autoClear = true;
+  }
+
+  /** 미러 위에 360° 레이더 디스크(맵)를 그린다. 앞·뒤·위험물을 한눈에. */
+  private drawRadar() {
+    const ctx = this.radarCtx, cv = this.radarCanvas, st = net.state;
+    if (!ctx || !cv) return;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!st || st.phase !== "racing" || !this.localReady) return;
+
+    const dpr = Math.min(devicePixelRatio, 2);
+    const R = 40 * dpr;                         // 레이더 반경(px)
+    const cx = cv.width - R - 8 * dpr;          // 우하단 코너
+    const cy = cv.height - R - 8 * dpr;
+    const RANGE = 2200;                         // 레이더가 담는 월드 거리
+    const h = this.local.heading;
+    const cos = Math.cos(-h + Math.PI / 2), sin = Math.sin(-h + Math.PI / 2);
+
+    // 디스크 배경
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(8,14,26,.55)"; ctx.fill();
+    ctx.lineWidth = 1.2 * dpr; ctx.strokeStyle = "rgba(150,180,220,.5)"; ctx.stroke();
+    // 십자선
+    ctx.strokeStyle = "rgba(150,180,220,.22)";
+    ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+    ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
+
+    const toRadar = (wx: number, wy: number) => {
+      const dx = wx - this.local.x, dy = wy - this.local.y;
+      const rx = (dx * cos - dy * sin) / RANGE * R;
+      const ry = (dx * sin + dy * cos) / RANGE * R;   // 위 = 진행방향
+      return { x: cx + rx, y: cy - ry, d: Math.hypot(dx, dy) };
+    };
+
+    let threat = false;
+
+    // 위험물(기름) — 주황 경고
+    try {
+      for (const hz of (st.hazards as any)) {
+        const p = toRadar(hz.x, hz.y); if (p.d > RANGE) continue;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 3 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffb033"; ctx.fill();
+        if (p.d < 520) threat = true;
+      }
+    } catch {}
+
+    // 카트 — 각자 색. 나는 중앙 삼각형.
+    for (const k of (st.karts as any).values()) {
+      if (k.sessionId === net.selfId) continue;
+      const p = toRadar(k.x, k.y); if (p.d > RANGE) continue;
+      const grp = this.karts[k.sessionId];
+      const col = grp?.userData?.color ?? 0xffffff;
+      const behind = ((k.x - this.local.x) * Math.cos(h) + (k.y - this.local.y) * Math.sin(h)) < 0;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3.4 * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = "#" + col.toString(16).padStart(6, "0"); ctx.fill();
+      ctx.lineWidth = 1 * dpr; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.stroke();
+      // 바짝 뒤에 붙은 상대 = 위협
+      if (behind && p.d < 620) threat = true;
+    }
+
+    // 내 카트 (중앙, 위 방향 삼각형)
+    ctx.save(); ctx.translate(cx, cy);
+    ctx.beginPath(); ctx.moveTo(0, -5 * dpr); ctx.lineTo(4 * dpr, 4 * dpr); ctx.lineTo(-4 * dpr, 4 * dpr);
+    ctx.closePath(); ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.restore();
+
+    // 위협 시 미러 테두리를 붉게 펄스
+    this.threatPulse = threat ? 1 : Math.max(0, this.threatPulse - 0.05);
+    this.mirrorEl?.classList.toggle("threat", this.threatPulse > 0.5);
   }
 
   /** 추격 카메라. 코너가 미리 보이는 것이 3D의 핵심 이점이다. */
