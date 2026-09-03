@@ -130,8 +130,9 @@ export class Race3D {
     const w = this.container.clientWidth || 1280;
     const h = this.container.clientHeight || 720;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // 모바일: Bloom·그림자가 이미 무거워 MSAA는 끄고 해상도 상한을 낮춘다(폰 DPR 3 → 4x 픽셀은 프레임 킬러).
+    this.renderer = new THREE.WebGLRenderer({ antialias: !this.isTouch });
+    this.renderer.setPixelRatio(this.pixelCap());
     this.renderer.setSize(w, h);
     // 필름 톤매핑 + sRGB 출력 = 색이 눈에 뜨는 대로 감마 보정되고 하이라이트가 부드럽게 뭉개진다.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -221,12 +222,17 @@ export class Race3D {
     this.composer.addPass(bloom);
     this.composer.addPass(new OutputPass());
     this.composer.setSize(w, h);
-    this.composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.composer.setPixelRatio(this.pixelCap());
 
     addEventListener("resize", () => this.resize());
     // 모바일: 방향 전환·iOS 사파리 주소창 접힘에 캔버스를 다시 맞춘다
     addEventListener("orientationchange", () => setTimeout(() => this.resize(), 250));
     visualViewport?.addEventListener("resize", () => this.resize());
+  }
+
+  /** 렌더 해상도 상한. 모바일은 1.5로 제한(폰 DPR 2~3에서 픽셀 수 급증 방지). */
+  private pixelCap() {
+    return Math.min(devicePixelRatio, this.isTouch ? 1.5 : 2);
   }
 
   private resize() {
@@ -276,7 +282,14 @@ export class Race3D {
         let dx = e.clientX - (r.left + r.width / 2);
         if (dx > MAX) dx = MAX; else if (dx < -MAX) dx = -MAX;
         stick.style.transform = `translateX(${dx}px)`;
-        this.touch.steer = Math.abs(dx) < DEAD ? 0 : Math.sign(dx);
+        // 아날로그 조향: 데드존 이후 비례값(-1~1). 살짝 완만한 곡선으로 미세 조작을 살린다.
+        if (Math.abs(dx) < DEAD) {
+          this.touch.steer = 0;
+        } else {
+          const raw = (dx - Math.sign(dx) * DEAD) / (MAX - DEAD); // 데드존 보정 후 -1~1
+          const n = Math.max(-1, Math.min(1, raw));
+          this.touch.steer = Math.sign(n) * Math.pow(Math.abs(n), 1.35);
+        }
       });
       const joyEnd = (e: PointerEvent) => {
         if (e.pointerId !== joyId) return;
@@ -302,9 +315,14 @@ export class Race3D {
     hold("tBrake", () => { this.touch.brake = true; }, () => { this.touch.brake = false; });
     hold("tDrift", () => { this.touch.drift = true; }, () => { this.touch.drift = false; });
 
-    // 아이템은 탭 = 즉시 사용 (Space 와 동일)
+    // 아이템은 탭 = 즉시 사용 (Space 와 동일). 눌림 피드백을 잠깐 준다.
     const item = document.getElementById("tItem");
-    item?.addEventListener("pointerdown", (e) => { e.preventDefault(); net.useItem(); });
+    item?.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      net.useItem();
+      item.classList.add("active");
+      setTimeout(() => item.classList.remove("active"), 120);
+    });
   }
 
   // ---------- 월드 구성 ----------

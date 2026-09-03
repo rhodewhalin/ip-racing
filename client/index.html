@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>IP Racing — 3D</title>
+    <!-- PWA / iOS: 홈 화면 추가 시 독립(standalone) 실행 → 사파리 주소창·툴바 제거 -->
+    <meta name="theme-color" content="#070c16" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="IP Racing" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
     <style>
       :root { --bg:#0b1220; --panel:#182236; --line:#2b3a57; --fg:#e8eefc; --accent:#4da3ff; --good:#37d67a; --bad:#ff5d6c; --warn:#ffb020; }
       * { box-sizing:border-box; font-family:system-ui,"Apple SD Gothic Neo",sans-serif; }
@@ -203,8 +212,8 @@
         #standings { left:12px; top:76px; font-size:11px; min-width:150px; padding:6px 9px; }
         #minimap { right:12px; top:12px; width:168px; height:112px; }
         #lapbanner { right:12px; top:140px; }
-        #btnMute { right:12px; bottom:auto; top:12px; padding:6px 9px; font-size:15px; }
-        #btnFull { right:60px; bottom:auto; top:12px; padding:6px 9px; font-size:15px; }
+        #btnMute { right:12px; bottom:auto; top:12px; padding:9px 12px; font-size:17px; min-width:44px; min-height:44px; }
+        #btnFull { right:66px; bottom:auto; top:12px; padding:9px 12px; font-size:17px; min-width:44px; min-height:44px; }
         /* 퀴즈는 조이스틱 위쪽 좌측에 — 우하단 버튼과 겹치지 않게 */
         .quiz-card { left:12px; right:auto; bottom:170px; width:min(64vw,360px); padding:10px 12px; }
         #qtext { font-size:14px; }
@@ -216,8 +225,8 @@
                 margin:8px 0; overflow-y:auto; }
         h1 { font-size:20px; }
         .sub { margin:0 0 10px; font-size:11px; }
-        input { padding:8px 10px; margin:4px 0 8px; font-size:13px; }
-        button { padding:9px 12px; font-size:13px; }
+        input { padding:11px 12px; margin:4px 0 8px; font-size:14px; min-height:44px; }
+        button { padding:11px 14px; font-size:14px; min-height:44px; }
         .prow { font-size:12px; padding:4px 0; }
         #reviewlist { max-height:150px; }
       }
@@ -268,7 +277,7 @@
         <div id="qtext"></div>
         <div id="qopts"></div>
         <div id="qbar"><div id="qfill"></div></div>
-        <div id="qhint">달리면서 답해도 됩니다 · 키 <b>1 2 3</b></div>
+        <div id="qhint">달리면서 답해도 됩니다 · <b>탭</b> 또는 키 <b>1 2 3</b></div>
       </div>
 
       <!-- 로비 -->

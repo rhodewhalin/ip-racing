@@ -1,0 +1,15 @@
+{
+  "name": "IP Racing",
+  "short_name": "IP Racing",
+  "description": "3D 멀티플레이어 카트 레이싱",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#070c16",
+  "theme_color": "#070c16",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
