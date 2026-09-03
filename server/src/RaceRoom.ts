@@ -1058,13 +1058,14 @@ export class RaceRoom extends Room<RoomState> {
 
   /** 허브 전광판 브리지 — 사람 결과만 hub /api/scores/server로 전송 (fire-and-forget).
    *  HUB_SCORE_URL·KIPLAY_SERVICE_TOKEN 없는 독립 배포에선 조용히 건너뛴다. */
-  private reportScoresToHub(results: Array<{ nickname: string; finalScore: number; isBot: boolean }>) {
+  private reportScoresToHub(results: Array<{ nickname: string; finalScore: number; isBot: boolean; rank: number }>) {
     const url = process.env.HUB_SCORE_URL;
     const token = process.env.KIPLAY_SERVICE_TOKEN;
     if (!url || !token) return;
-    const sessionId = `${this.roomId}:${this.raceSeq}`;
     for (const r of results) {
       if (r.isBot) continue; // 전광판은 사람 순위만 — 봇 제외
+      // 허브는 (gameId, sessionId) 중복을 409로 거절 — 레이스 단위가 아니라 (레이스, 플레이어) 단위로 고유하게 (SKY-HARBOR 브리지와 동일 규칙)
+      const sessionId = `${this.roomId}:${this.raceSeq}:${r.rank}`;
       void fetch(`${url.replace(/\/+$/, "")}/api/scores/server`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
